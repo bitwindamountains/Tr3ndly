@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Any
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
@@ -17,8 +18,8 @@ def _enable_sqlite_foreign_keys(dbapi_connection: object, _: object) -> None:
     cursor.close()
 
 
-def build_engine(database_url: str) -> AsyncEngine:
-    engine = create_async_engine(database_url, pool_pre_ping=True)
+def build_engine(database_url: str, **options: Any) -> AsyncEngine:
+    engine = create_async_engine(database_url, pool_pre_ping=True, **options)
     # Listen on this engine only, and only when it is SQLite.
     if engine.dialect.name == "sqlite":
         event.listen(engine.sync_engine, "connect", _enable_sqlite_foreign_keys)

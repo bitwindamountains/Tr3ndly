@@ -82,13 +82,15 @@ A pre-refactor backup was taken because this folder is not a git repository. It 
   - invalid action input is rejected;
   - in real Chrome: wrong password, sign-in, Operations, filtering by Cebu, Defer (recorded and shown in the audit trail), and sign-out all worked.
 - **Tests:** 52 Python and 6 web.
+- **PostgreSQL:** the full Python suite, migrations included, also passes on PostgreSQL 18. It was run locally with the embedded binaries. API test fixtures use `NullPool`, because asyncpg connections can't cross event loops.
+- **CI:** added a GitHub Actions workflow running the Python matrix (SQLite and Postgres 17) and the web checks. It has not run on GitHub yet, because the repository has no remote.
 
 ## Next
 - **Not fixed: open review items.**
   - Sign-in has no rate limiting. Use a long `OPERATOR_PASSWORD`, and add throttling before any public exposure.
   - `next.config.ts` uses `output: "standalone"`, so production should run `node .next/standalone/server.js` rather than `next start`.
   - A missing opportunity returns HTTP 200 with the not-found UI, because `loading.tsx` streams before `notFound()`.
-  - There is no CI workflow. Add GitHub Actions for pytest, ruff, the migration test and the web checks.
+  - Push to GitHub to activate CI. There is no remote yet.
 - **Product, per plan:**
   - Add a `/operations` page using the new endpoints.
   - Release 0 validation with a real operator, to tune thresholds and catalog priors.

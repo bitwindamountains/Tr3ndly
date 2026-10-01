@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.pool import NullPool
 
 from apps.api.app.database import get_session
 from apps.api.app.main import app
-from tests.conftest import load_forecast, mock_client
-from tr3ndly.db.base import Base
+from tests.conftest import database_url, load_forecast, mock_client, reset_schema
 from tr3ndly.db.session import build_engine
 from tr3ndly.db.types import utcnow
 from tr3ndly.geo import MANILA
@@ -39,12 +39,12 @@ async def seed_live(sessions: async_sessionmaker[AsyncSession]) -> None:
 
 
 def make_client(tmp_path: Path, prepare: Prepare) -> Iterator[TestClient]:
-    test_engine = build_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+    # Setup and TestClient run in different event loops; asyncpg connections cannot cross them.
+    test_engine = build_engine(database_url(tmp_path), poolclass=NullPool)
     test_sessions = async_sessionmaker(test_engine, expire_on_commit=False)
 
     async def prepare_database() -> None:
-        async with test_engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
+        await reset_schema(test_engine)
         await prepare(test_sessions)  # type: ignore[misc]
 
     async def override_session() -> AsyncIterator[AsyncSession]:

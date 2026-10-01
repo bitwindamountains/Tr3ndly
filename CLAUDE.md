@@ -33,7 +33,9 @@ Checks:
 npm.cmd run lint:web ; npm.cmd run typecheck:web ; npm.cmd run test:web ; npm.cmd run build:web
 ```
 
-To check for schema drift, run `alembic check` against a freshly upgraded database. `tests/db/test_migrations.py` runs upgrade, downgrade, upgrade, and a drift check.
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs ruff and pytest on both SQLite and PostgreSQL 17, plus the web lint, typecheck, test and build. Set `TEST_DATABASE_URL=postgresql+asyncpg://...` to run the Python suite on Postgres locally; the fixtures reset the `public` schema before each test. `tests/db/test_migrations.py` runs upgrade, downgrade, upgrade, and a drift check on whichever database is configured.
+
+On Windows without Docker, you can borrow the rental manager's embedded Postgres binaries (`../rental manager/node_modules/@embedded-postgres/windows-x64/native/bin`): use `initdb` and `pg_ctl` on a spare port.
 
 ## Architecture
 
