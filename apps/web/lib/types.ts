@@ -1,0 +1,62 @@
+export type ReasonType = "timely" | "trend" | "both";
+
+export interface Evidence {
+  source_name: string;
+  source_url: string | null;
+  observed_at: string;
+  summary: string;
+}
+
+export interface Opportunity {
+  id: string;
+  product_concept: string;
+  category: string;
+  reason_type: ReasonType;
+  why_now: string;
+  target_user: string;
+  location: string;
+  expires_at: string;
+  score: {
+    demand: number;
+    execution: number;
+    marketplace_fit_prior: number;
+    uncertainty_penalty: number;
+    discovery_priority: number;
+    version: string;
+  };
+  search_queries: string[];
+  uncertainties: string[];
+  evidence: Evidence[];
+}
+
+export interface Decision {
+  id: string;
+  opportunity_id: string;
+  decision: "accepted" | "rejected" | "deferred" | "insufficient_evidence";
+  reason_code: string;
+  note: string | null;
+  score_version: string;
+  created_at: string;
+}
+
+export interface OpportunityDetail extends Opportunity {
+  status: string;
+  decisions: Decision[];
+}
+
+export interface TodayData {
+  generated_at: string;
+  mode: "demo" | "live";
+  source_health: "healthy" | "degraded" | "demo";
+  signals: Array<{
+    id: string;
+    headline: string;
+    event_type: string;
+    location: string;
+    summary: string;
+    confidence: number;
+    consumer_needs: string[];
+    expires_at: string;
+  }>;
+  opportunities: Opportunity[];
+}

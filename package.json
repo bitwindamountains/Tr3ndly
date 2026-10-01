@@ -1,0 +1,19 @@
+{
+  "name": "tr3ndly",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace @tr3ndly/web",
+    "build:web": "npm run build --workspace @tr3ndly/web",
+    "lint:web": "npm run lint --workspace @tr3ndly/web",
+    "typecheck:web": "npm run typecheck --workspace @tr3ndly/web",
+    "test:web": "npm run test --workspace @tr3ndly/web"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
+
