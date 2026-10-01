@@ -40,7 +40,7 @@ export function OpportunityCard({ opportunity }: { opportunity: Opportunity }) {
       </div>
 
       <div className="card-footer">
-        <span className="evidence"><ShieldCheck size={15} /> {opportunity.evidence.length} evidence item</span>
+        <span className="evidence"><ShieldCheck size={15} /> {opportunity.evidence.length} evidence {opportunity.evidence.length === 1 ? "item" : "items"}</span>
         <Link href={`/opportunities/${opportunity.id}`}>
           Review opportunity <ArrowUpRight size={16} />
         </Link>

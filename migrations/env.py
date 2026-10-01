@@ -6,12 +6,15 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from apps.api.app.config import get_settings
+from tr3ndly.config import get_settings
 from tr3ndly.db import models  # noqa: F401
 from tr3ndly.db.base import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# Tests pass an explicit URL through config.attributes; everything else uses settings.
+config.set_main_option(
+    "sqlalchemy.url", config.attributes.get("database_url") or get_settings().database_url
+)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

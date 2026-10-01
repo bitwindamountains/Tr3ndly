@@ -22,6 +22,8 @@ export interface Opportunity {
     marketplace_fit_prior: number;
     uncertainty_penalty: number;
     discovery_priority: number;
+    timely_score?: number | null;
+    trend_score?: number | null;
     version: string;
   };
   search_queries: string[];
@@ -44,10 +46,22 @@ export interface OpportunityDetail extends Opportunity {
   decisions: Decision[];
 }
 
+export interface SourceStatus {
+  slug: string;
+  display_name: string;
+  state: "healthy" | "degraded" | "failing" | "never_run" | "disabled";
+  poll_interval_minutes: number;
+  attribution: string;
+  last_run_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+}
+
 export interface TodayData {
   generated_at: string;
   mode: "demo" | "live";
   source_health: "healthy" | "degraded" | "demo";
+  sources: SourceStatus[];
   signals: Array<{
     id: string;
     headline: string;
@@ -56,6 +70,8 @@ export interface TodayData {
     summary: string;
     confidence: number;
     consumer_needs: string[];
+    timely_score: number;
+    sensitivity: string;
     expires_at: string;
   }>;
   opportunities: Opportunity[];

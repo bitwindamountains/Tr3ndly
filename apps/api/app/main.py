@@ -3,26 +3,37 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 import structlog
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.app.config import get_settings
-from apps.api.app.database import dispose_engine, get_session
-from apps.api.app.logging import configure_logging
-from apps.api.app.schemas import (
+from apps.api.app.database import get_session
+from tr3ndly import __version__
+from tr3ndly.config import Settings, get_settings
+from tr3ndly.db.session import dispose_engine
+from tr3ndly.db.types import utcnow
+from tr3ndly.log import configure_logging
+from tr3ndly.operations import recent_runs, source_statuses
+from tr3ndly.opportunities.repository import (
+    DecisionNotAllowed,
+    OpportunityNotFound,
+    OpportunityRepository,
+)
+from tr3ndly.schemas import (
     DecisionCreate,
     DecisionResponse,
     HealthResponse,
     OpportunityDetail,
+    SourceRunView,
+    SourceStatus,
     TodayResponse,
 )
-from tr3ndly.opportunities.repository import OpportunityRepository
 
 settings = get_settings()
 configure_logging(settings.log_level)
 logger = structlog.get_logger()
 DatabaseSession = Annotated[AsyncSession, Depends(get_session)]
+AppSettings = Annotated[Settings, Depends(get_settings)]
 
 
 @asynccontextmanager
@@ -35,7 +46,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.1.0",
+    version=__version__,
     description="Evidence-to-opportunity API for Tr3ndly.",
     lifespan=lifespan,
 )
@@ -58,9 +69,9 @@ async def health() -> HealthResponse:
 
 
 @app.get("/today", response_model=TodayResponse, tags=["opportunities"])
-async def today(session: DatabaseSession) -> TodayResponse:
-    """Return active opportunities from the persistence layer."""
-    return await OpportunityRepository(session).get_today()
+async def today(session: DatabaseSession, config: AppSettings) -> TodayResponse:
+    """Return the ranked opportunity queue, timely signals, and source health."""
+    return await OpportunityRepository(session, config).get_today()
 
 
 @app.get(
@@ -71,8 +82,9 @@ async def today(session: DatabaseSession) -> TodayResponse:
 async def opportunity_detail(
     opportunity_id: str,
     session: DatabaseSession,
+    config: AppSettings,
 ) -> OpportunityDetail:
-    opportunity = await OpportunityRepository(session).get_detail(opportunity_id)
+    opportunity = await OpportunityRepository(session, config).get_detail(opportunity_id)
     if opportunity is None:
         raise HTTPException(status_code=404, detail="Opportunity not found")
     return opportunity
@@ -88,8 +100,24 @@ async def create_decision(
     opportunity_id: str,
     payload: DecisionCreate,
     session: DatabaseSession,
+    config: AppSettings,
 ) -> DecisionResponse:
-    decision = await OpportunityRepository(session).record_decision(opportunity_id, payload)
-    if decision is None:
-        raise HTTPException(status_code=404, detail="Opportunity not found")
-    return decision
+    try:
+        return await OpportunityRepository(session, config).record_decision(opportunity_id, payload)
+    except OpportunityNotFound:
+        raise HTTPException(status_code=404, detail="Opportunity not found") from None
+    except DecisionNotAllowed as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+
+
+@app.get("/operations/sources", response_model=list[SourceStatus], tags=["operations"])
+async def operations_sources(session: DatabaseSession, config: AppSettings) -> list[SourceStatus]:
+    return await source_statuses(session, config, utcnow())
+
+
+@app.get("/operations/runs", response_model=list[SourceRunView], tags=["operations"])
+async def operations_runs(
+    session: DatabaseSession,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> list[SourceRunView]:
+    return await recent_runs(session, limit)

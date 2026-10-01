@@ -24,12 +24,22 @@ class Evidence(BaseModel):
     summary: str
 
 
+class SourceState(StrEnum):
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    FAILING = "failing"
+    NEVER_RUN = "never_run"
+    DISABLED = "disabled"
+
+
 class ScoreBreakdown(BaseModel):
     demand: int = Field(ge=0, le=100)
     execution: int = Field(ge=0, le=100)
     marketplace_fit_prior: int = Field(ge=0, le=100)
     uncertainty_penalty: int = Field(ge=0, le=100)
     discovery_priority: int = Field(ge=0, le=100)
+    timely_score: int | None = Field(default=None, ge=0, le=100)
+    trend_score: int | None = Field(default=None, ge=0, le=100)
     version: str
 
 
@@ -77,13 +87,37 @@ class TimelySignal(BaseModel):
     summary: str
     confidence: int = Field(ge=0, le=100)
     consumer_needs: list[str]
+    timely_score: int = Field(ge=0, le=100)
+    sensitivity: str
     expires_at: datetime
+
+
+class SourceStatus(BaseModel):
+    slug: str
+    display_name: str
+    state: SourceState
+    poll_interval_minutes: int
+    attribution: str
+    last_run_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_error: str | None = None
+
+
+class SourceRunView(BaseModel):
+    id: str
+    source: str
+    status: str
+    started_at: datetime
+    finished_at: datetime | None
+    error: str | None
+    stats: dict[str, int]
 
 
 class TodayResponse(BaseModel):
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     mode: Literal["demo", "live"] = "demo"
     source_health: SourceHealth = SourceHealth.DEMO
+    sources: list[SourceStatus] = Field(default_factory=list)
     signals: list[TimelySignal]
     opportunities: list[OpportunitySummary]
 

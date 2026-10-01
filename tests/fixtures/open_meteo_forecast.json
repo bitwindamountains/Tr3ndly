@@ -1,0 +1,62 @@
+[
+  {
+    "latitude": 14.586995,
+    "longitude": 121.002785,
+    "timezone": "Asia/Manila",
+    "utc_offset_seconds": 28800,
+    "daily_units": {
+      "time": "iso8601",
+      "apparent_temperature_max": "°C",
+      "temperature_2m_max": "°C",
+      "precipitation_sum": "mm",
+      "precipitation_probability_max": "%"
+    },
+    "daily": {
+      "time": ["2026-10-02", "2026-10-03", "2026-10-04"],
+      "apparent_temperature_max": [39.2, 40.6, 36.1],
+      "temperature_2m_max": [33.1, 33.8, 31.9],
+      "precipitation_sum": [5.2, 2.0, 12.4],
+      "precipitation_probability_max": [45, 30, 70]
+    }
+  },
+  {
+    "latitude": 10.31,
+    "longitude": 123.89,
+    "timezone": "Asia/Manila",
+    "utc_offset_seconds": 28800,
+    "daily_units": {
+      "time": "iso8601",
+      "apparent_temperature_max": "°C",
+      "temperature_2m_max": "°C",
+      "precipitation_sum": "mm",
+      "precipitation_probability_max": "%"
+    },
+    "daily": {
+      "time": ["2026-10-02", "2026-10-03", "2026-10-04"],
+      "apparent_temperature_max": [35.0, 34.2, 34.8],
+      "temperature_2m_max": [31.0, 30.4, 30.9],
+      "precipitation_sum": [8.0, 34.5, 28.0],
+      "precipitation_probability_max": [55, 85, 80]
+    }
+  },
+  {
+    "latitude": 7.19,
+    "longitude": 125.46,
+    "timezone": "Asia/Manila",
+    "utc_offset_seconds": 28800,
+    "daily_units": {
+      "time": "iso8601",
+      "apparent_temperature_max": "°C",
+      "temperature_2m_max": "°C",
+      "precipitation_sum": "mm",
+      "precipitation_probability_max": "%"
+    },
+    "daily": {
+      "time": ["2026-10-02", "2026-10-03", "2026-10-04"],
+      "apparent_temperature_max": [34.0, 33.5, 35.2],
+      "temperature_2m_max": [31.0, 30.6, 31.8],
+      "precipitation_sum": [3.1, 6.0, 4.4],
+      "precipitation_probability_max": [40, 50, 35]
+    }
+  }
+]

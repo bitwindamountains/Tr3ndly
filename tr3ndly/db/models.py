@@ -7,22 +7,28 @@ from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
-    DateTime,
     Enum,
     ForeignKey,
     Index,
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tr3ndly.db.base import Base
+from tr3ndly.db.types import UTCDateTime, utcnow
 
 
 def new_id() -> str:
     return str(uuid.uuid4())
+
+
+def created_at_column() -> Mapped[datetime]:
+    # Python-side default keeps microsecond precision; SQLite's CURRENT_TIMESTAMP is per second.
+    return mapped_column(UTCDateTime(), default=utcnow, server_default=func.now())
 
 
 class SourceRunStatus(enum.StrEnum):
@@ -53,8 +59,25 @@ class OpportunityReason(enum.StrEnum):
     BOTH = "both"
 
 
+class EventStatus(enum.StrEnum):
+    ACTIVE = "active"
+    EXPIRED = "expired"
+
+
+class Sensitivity(enum.StrEnum):
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    BLOCKED = "blocked"
+
+
 def enum_values(enum_type: type[enum.Enum]) -> list[str]:
     return [str(member.value) for member in enum_type]
+
+
+def enum_column(enum_type: type[enum.Enum]) -> Enum:
+    return Enum(enum_type, native_enum=False, values_callable=enum_values)
 
 
 class SourceConfig(Base):
@@ -66,7 +89,7 @@ class SourceConfig(Base):
     access_method: Mapped[str] = mapped_column(String(80))
     terms_url: Mapped[str | None] = mapped_column(String(2048))
     enabled: Mapped[bool] = mapped_column(default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = created_at_column()
 
     runs: Mapped[list["SourceRun"]] = relationship(back_populates="source")
 
@@ -77,11 +100,10 @@ class SourceRun(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     source_id: Mapped[str] = mapped_column(ForeignKey("source_configs.id", ondelete="CASCADE"))
     status: Mapped[SourceRunStatus] = mapped_column(
-        Enum(SourceRunStatus, native_enum=False, values_callable=enum_values),
-        default=SourceRunStatus.RUNNING,
+        enum_column(SourceRunStatus), default=SourceRunStatus.RUNNING
     )
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime] = created_at_column()
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     cursor: Mapped[str | None] = mapped_column(String(512))
     error: Mapped[str | None] = mapped_column(Text)
     stats: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
@@ -92,7 +114,10 @@ class SourceRun(Base):
 
 class RawSignal(Base):
     __tablename__ = "raw_signals"
-    __table_args__ = (Index("ix_raw_signals_source_observed", "source_id", "observed_at"),)
+    __table_args__ = (
+        Index("ix_raw_signals_source_observed", "source_id", "observed_at"),
+        UniqueConstraint("source_id", "content_hash", name="uq_raw_signals_source_content_hash"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     source_id: Mapped[str] = mapped_column(ForeignKey("source_configs.id"))
@@ -102,35 +127,89 @@ class RawSignal(Base):
     title: Mapped[str] = mapped_column(String(1000))
     permitted_summary: Mapped[str | None] = mapped_column(Text)
     content_hash: Mapped[str] = mapped_column(String(64), index=True)
-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    observed_at: Mapped[datetime] = mapped_column(UTCDateTime())
     raw_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = created_at_column()
 
     source_run: Mapped[SourceRun] = relationship(back_populates="signals")
 
 
+class EventCluster(Base):
+    """A detected real-world condition, such as heat in Metro Manila, that may create needs."""
+
+    __tablename__ = "event_clusters"
+    __table_args__ = (
+        CheckConstraint("confidence BETWEEN 0 AND 100", name="confidence_range"),
+        CheckConstraint("timely_score BETWEEN 0 AND 100", name="timely_score_range"),
+        Index("ix_event_clusters_dedupe_status", "dedupe_key", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_id: Mapped[str] = mapped_column(ForeignKey("source_configs.id"))
+    dedupe_key: Mapped[str] = mapped_column(String(240))
+    event_type: Mapped[str] = mapped_column(String(80))
+    location: Mapped[str] = mapped_column(String(160))
+    title: Mapped[str] = mapped_column(String(1000))
+    summary: Mapped[str] = mapped_column(Text)
+    consumer_needs: Mapped[list[str]] = mapped_column(JSON, default=list)
+    sensitivity: Mapped[Sensitivity] = mapped_column(enum_column(Sensitivity))
+    confidence: Mapped[int] = mapped_column(Integer)
+    timely_score: Mapped[int] = mapped_column(Integer)
+    rule_version: Mapped[str] = mapped_column(String(80))
+    status: Mapped[EventStatus] = mapped_column(
+        enum_column(EventStatus), default=EventStatus.ACTIVE
+    )
+    starts_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    first_seen_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+    members: Mapped[list["EventClusterMember"]] = relationship(
+        back_populates="cluster", cascade="all, delete-orphan"
+    )
+    opportunities: Mapped[list["Opportunity"]] = relationship(back_populates="event_cluster")
+
+
+class EventClusterMember(Base):
+    __tablename__ = "event_cluster_members"
+
+    cluster_id: Mapped[str] = mapped_column(
+        ForeignKey("event_clusters.id", ondelete="CASCADE"), primary_key=True
+    )
+    raw_signal_id: Mapped[str] = mapped_column(ForeignKey("raw_signals.id"), primary_key=True)
+
+    cluster: Mapped[EventCluster] = relationship(back_populates="members")
+
+
 class Opportunity(Base):
     __tablename__ = "opportunities"
+    __table_args__ = (
+        UniqueConstraint(
+            "event_cluster_id", "concept_key", name="uq_opportunities_event_cluster_concept"
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     product_concept: Mapped[str] = mapped_column(String(240))
     category: Mapped[str] = mapped_column(String(160))
-    reason_type: Mapped[OpportunityReason] = mapped_column(
-        Enum(OpportunityReason, native_enum=False, values_callable=enum_values)
-    )
+    reason_type: Mapped[OpportunityReason] = mapped_column(enum_column(OpportunityReason))
     why_now: Mapped[str] = mapped_column(Text)
     target_user: Mapped[str] = mapped_column(String(240))
     location: Mapped[str] = mapped_column(String(160))
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
     status: Mapped[OpportunityStatus] = mapped_column(
-        Enum(OpportunityStatus, native_enum=False, values_callable=enum_values),
-        default=OpportunityStatus.ELIGIBLE,
+        enum_column(OpportunityStatus), default=OpportunityStatus.ELIGIBLE
     )
     search_queries: Mapped[list[str]] = mapped_column(JSON, default=list)
     uncertainties: Mapped[list[str]] = mapped_column(JSON, default=list)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    event_cluster_id: Mapped[str | None] = mapped_column(
+        ForeignKey("event_clusters.id"), index=True
+    )
+    concept_key: Mapped[str | None] = mapped_column(String(120))
+    created_at: Mapped[datetime] = created_at_column()
 
+    event_cluster: Mapped[EventCluster | None] = relationship(back_populates="opportunities")
     evidence: Mapped[list["OpportunityEvidence"]] = relationship(
         back_populates="opportunity", cascade="all, delete-orphan"
     )
@@ -149,9 +228,10 @@ class OpportunityEvidence(Base):
     opportunity_id: Mapped[str] = mapped_column(
         ForeignKey("opportunities.id", ondelete="CASCADE"), index=True
     )
+    raw_signal_id: Mapped[str | None] = mapped_column(ForeignKey("raw_signals.id"))
     source_name: Mapped[str] = mapped_column(String(160))
     source_url: Mapped[str | None] = mapped_column(String(2048))
-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    observed_at: Mapped[datetime] = mapped_column(UTCDateTime())
     summary: Mapped[str] = mapped_column(Text)
 
     opportunity: Mapped[Opportunity] = relationship(back_populates="evidence")
@@ -165,6 +245,8 @@ class ScoreSnapshot(Base):
         CheckConstraint("marketplace_fit_prior BETWEEN 0 AND 100", name="marketplace_fit_range"),
         CheckConstraint("uncertainty_penalty BETWEEN 0 AND 100", name="uncertainty_range"),
         CheckConstraint("discovery_priority BETWEEN 0 AND 100", name="priority_range"),
+        CheckConstraint("timely_score BETWEEN 0 AND 100", name="timely_range"),
+        CheckConstraint("trend_score BETWEEN 0 AND 100", name="trend_range"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -176,8 +258,12 @@ class ScoreSnapshot(Base):
     marketplace_fit_prior: Mapped[int] = mapped_column(Integer)
     uncertainty_penalty: Mapped[int] = mapped_column(Integer)
     discovery_priority: Mapped[int] = mapped_column(Integer)
+    timely_score: Mapped[int | None] = mapped_column(Integer)
+    trend_score: Mapped[int | None] = mapped_column(Integer)
+    # Input dimensions, kept so the formula can be replayed on historical data.
+    components: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     version: Mapped[str] = mapped_column(String(80))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = created_at_column()
 
     opportunity: Mapped[Opportunity] = relationship(back_populates="scores")
 
@@ -189,12 +275,10 @@ class DecisionEvent(Base):
     opportunity_id: Mapped[str] = mapped_column(
         ForeignKey("opportunities.id", ondelete="CASCADE"), index=True
     )
-    decision: Mapped[DecisionType] = mapped_column(
-        Enum(DecisionType, native_enum=False, values_callable=enum_values)
-    )
+    decision: Mapped[DecisionType] = mapped_column(enum_column(DecisionType))
     reason_code: Mapped[str] = mapped_column(String(120))
     note: Mapped[str | None] = mapped_column(Text)
     score_version: Mapped[str] = mapped_column(String(80))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = created_at_column()
 
     opportunity: Mapped[Opportunity] = relationship(back_populates="decisions")

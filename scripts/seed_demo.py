@@ -2,13 +2,13 @@ import asyncio
 
 from sqlalchemy import select
 
-from apps.api.app.database import dispose_engine, session_factory
 from tr3ndly.db.models import Opportunity
+from tr3ndly.db.session import dispose_engine, get_session_factory
 from tr3ndly.opportunities.demo import DEMO_OPPORTUNITY_ID, build_demo_opportunity
 
 
 async def seed() -> None:
-    async with session_factory() as session:
+    async with get_session_factory()() as session:
         existing = await session.scalar(
             select(Opportunity.id).where(Opportunity.id == DEMO_OPPORTUNITY_ID)
         )

@@ -1,6 +1,6 @@
-import { Activity, Bell, ChevronDown, CircleDot, Clock3, DatabaseZap, SlidersHorizontal } from "lucide-react";
+import { Activity, AlertTriangle, Bell, ChevronDown, CircleDot, Clock3, DatabaseZap, SlidersHorizontal } from "lucide-react";
 
-import type { TodayData } from "@/lib/types";
+import type { SourceStatus, TodayData } from "@/lib/types";
 import { Brand } from "./brand";
 import { OpportunityCard } from "./opportunity-card";
 
@@ -52,6 +52,16 @@ export function TodayView({ data, apiConnected }: { data: TodayData; apiConnecte
         </aside>
       )}
 
+      {data.mode === "live" && data.source_health === "degraded" && (
+        <aside className="demo-banner degraded-banner" role="alert">
+          <AlertTriangle size={19} />
+          <div>
+            <strong>Some sources are stale or failing</strong>
+            <span>{data.sources.filter((source) => source.state !== "healthy" && source.state !== "disabled").map(describeSource).join(" · ")}. Treat rankings as possibly out of date.</span>
+          </div>
+        </aside>
+      )}
+
       <section className="signal-section">
         <div className="section-heading">
           <div><p className="eyebrow">Demand context</p><h2>Timely business signals</h2></div>
@@ -62,17 +72,19 @@ export function TodayView({ data, apiConnected }: { data: TodayData; apiConnecte
             <article className="signal-card" key={signal.id}>
               <div className="signal-rank">0{index + 1}</div>
               <div>
-                <div className="signal-labels"><span>{signal.event_type.replaceAll("_", " ")}</span><span>{signal.confidence}% confidence</span></div>
+                <div className="signal-labels"><span>{signal.event_type.replaceAll("_", " ")}</span><span>{signal.confidence}% confidence · {signal.location}</span></div>
                 <h3>{signal.headline}</h3>
                 <p>{signal.summary}</p>
                 <div className="need-list">{signal.consumer_needs.map((need) => <span key={need}>{need}</span>)}</div>
               </div>
             </article>
           ))}
-          <article className="signal-card empty-signal">
-            <div className="signal-rank">—</div>
-            <div><span className="empty-label">QUALITY GATE</span><h3>No forced recommendations</h3><p>Empty space is intentional when evidence does not clear the confidence threshold.</p></div>
-          </article>
+          {data.signals.length < 3 && (
+            <article className="signal-card empty-signal">
+              <div className="signal-rank">—</div>
+              <div><span className="empty-label">QUALITY GATE</span><h3>No forced recommendations</h3><p>Empty space is intentional when evidence does not clear the confidence threshold.</p></div>
+            </article>
+          )}
         </div>
       </section>
 
@@ -90,7 +102,28 @@ export function TodayView({ data, apiConnected }: { data: TodayData; apiConnecte
           </div>
         </div>
       </section>
+
+      {data.sources.length > 0 && (
+        <footer className="source-footer">
+          {data.sources.map((source) => (
+            <span key={source.slug}>{source.attribution} · {describeSource(source)}</span>
+          ))}
+        </footer>
+      )}
     </main>
   );
+}
+
+function describeSource(source: SourceStatus): string {
+  const label = source.state.replaceAll("_", " ");
+  if (!source.last_success_at) return `${source.display_name}: ${label}`;
+  const updated = new Intl.DateTimeFormat("en-PH", {
+    timeZone: "Asia/Manila",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(source.last_success_at));
+  return `${source.display_name}: ${label}, last success ${updated} PHT`;
 }
 

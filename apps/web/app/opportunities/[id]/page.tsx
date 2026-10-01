@@ -34,7 +34,7 @@ export default async function OpportunityPage({
           <p>{opportunity.why_now}</p>
           <div className="meta-row">
             <span><MapPin size={15} /> {opportunity.location}</span>
-            <span><Clock3 size={15} /> Expires {new Date(opportunity.expires_at).toLocaleDateString("en-PH")}</span>
+            <span><Clock3 size={15} /> Expires {new Date(opportunity.expires_at).toLocaleString("en-PH", { timeZone: "Asia/Manila", dateStyle: "medium", timeStyle: "short" })} PHT</span>
           </div>
         </div>
         <div className="priority-dial">
@@ -51,9 +51,23 @@ export default async function OpportunityPage({
             {opportunity.evidence.map((item) => (
               <article className="evidence-row" key={`${item.source_name}-${item.observed_at}`}>
                 <ShieldCheck size={18} />
-                <div><strong>{item.source_name}</strong><p>{item.summary}</p><time>{new Date(item.observed_at).toLocaleString("en-PH")}</time></div>
+                <div><strong>{item.source_url ? <a href={item.source_url} rel="noreferrer" target="_blank">{item.source_name}</a> : item.source_name}</strong><p>{item.summary}</p><time>{new Date(item.observed_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })} PHT</time></div>
               </article>
             ))}
+          </section>
+
+          <section className="detail-card">
+            <p className="eyebrow">Score breakdown · {opportunity.score.version}</p>
+            <h2>How the priority was calculated</h2>
+            <dl className="score-table">
+              {opportunity.score.timely_score != null && <><dt>Timely demand</dt><dd>{opportunity.score.timely_score}</dd></>}
+              {opportunity.score.trend_score != null && <><dt>Trend demand</dt><dd>{opportunity.score.trend_score}</dd></>}
+              <dt>Combined demand</dt><dd>{opportunity.score.demand}</dd>
+              <dt>Content fit</dt><dd>{opportunity.score.execution}</dd>
+              <dt>Marketplace fit (prior)</dt><dd>{opportunity.score.marketplace_fit_prior}</dd>
+              <dt>Uncertainty penalty</dt><dd>−{opportunity.score.uncertainty_penalty}</dd>
+              <dt>Discovery priority</dt><dd><strong>{opportunity.score.discovery_priority}</strong></dd>
+            </dl>
           </section>
 
           <section className="detail-card">

@@ -7,6 +7,7 @@ export const localDemoData: TodayData = {
   generated_at: now.toISOString(),
   mode: "demo",
   source_health: "demo",
+  sources: [],
   signals: [
     {
       id: "signal_demo_heat",
@@ -15,13 +16,15 @@ export const localDemoData: TodayData = {
       location: "Metro Manila",
       summary: "Seeded data demonstrates the evidence-to-opportunity workflow while live sources are disabled.",
       confidence: 78,
-      consumer_needs: ["portable cooling", "hydration", "sun comfort"],
+      consumer_needs: ["personal cooling", "hydration", "sun protection"],
+      timely_score: 78,
+      sensitivity: "low",
       expires_at: expiry.toISOString(),
     },
   ],
   opportunities: [
     {
-      id: "opp_demo_fan",
+      id: "demo_opp_fan",
       product_concept: "Portable rechargeable fan",
       category: "Household convenience",
       reason_type: "timely",

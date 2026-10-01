@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
 
+from tr3ndly import __version__
+
 
 def test_health(client: TestClient) -> None:
     response = client.get("/health")
@@ -9,5 +11,5 @@ def test_health(client: TestClient) -> None:
         "status": "ok",
         "service": "Tr3ndly API",
         "environment": "development",
-        "version": "0.1.0",
+        "version": __version__,
     }
