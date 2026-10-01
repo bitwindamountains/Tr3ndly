@@ -19,6 +19,8 @@ class SourceDefinition:
     access_method: str
     terms_url: str | None
     attribution: str
+    # Where evidence links point, so operators can see the source and its licence.
+    attribution_url: str | None
     poll_interval: timedelta
     source_confidence: int
 

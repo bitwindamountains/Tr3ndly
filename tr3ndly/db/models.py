@@ -235,6 +235,7 @@ class OpportunityEvidence(Base):
     summary: Mapped[str] = mapped_column(Text)
 
     opportunity: Mapped[Opportunity] = relationship(back_populates="evidence")
+    raw_signal: Mapped[RawSignal | None] = relationship()
 
 
 class ScoreSnapshot(Base):

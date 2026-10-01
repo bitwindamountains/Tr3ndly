@@ -35,12 +35,10 @@ from tr3ndly.db.types import utcnow
 from tr3ndly.intelligence import DETECTORS, DetectedEvent
 from tr3ndly.intelligence.catalog import CATALOG_VERSION, NEED_LABELS, ProductConcept, concepts_for
 from tr3ndly.intelligence.scoring import (
-    SCORE_VERSION,
     SENSITIVITY_PENALTY,
+    OpportunityScore,
     TimelyDimensions,
-    demand_score,
-    discovery_priority,
-    uncertainty_penalty,
+    score_concept,
 )
 from tr3ndly.sources.base import NormalizedSignal, SourceAdapter, SourceDefinition
 
@@ -114,21 +112,10 @@ async def run_source(
         stats.fetched = len(signals)
 
         async with sessions() as session:
-            stored = await _store_signals(session, source_id, run_id, signals, stats)
-            detector = DETECTORS[definition.slug]
-            events = detector(signals, now)
-            stats.events_detected = len(events)
-            kept_keys: set[str] = set()
-            for event in events:
-                if (
-                    event.sensitivity == Sensitivity.BLOCKED
-                    or _timely_dimensions(event, definition).score() < min_timely_score
-                ):
-                    stats.events_below_threshold += 1
-                    continue
-                kept_keys.add(event.dedupe_key)
-                await _upsert_event(session, source_id, definition, event, stored, now, stats)
-            await _retire_missing_events(session, source_id, kept_keys, now, stats)
+            ingestion = _Ingestion(session, source_id, run_id, definition, now, stats)
+            await ingestion.apply(
+                signals, DETECTORS[definition.slug](signals, now), min_timely_score
+            )
             await session.commit()
 
         await _finish_run(sessions, run_id, SourceRunStatus.SUCCEEDED, stats)
@@ -158,6 +145,274 @@ async def expire_stale(session: AsyncSession, now: datetime | None = None) -> tu
     return events.rowcount or 0, opportunities.rowcount or 0  # type: ignore[attr-defined]
 
 
+def timely_dimensions(event: DetectedEvent, definition: SourceDefinition) -> TimelyDimensions:
+    return TimelyDimensions(
+        # Scored right after fetching. Stale data is surfaced through source health instead.
+        freshness=100,
+        geography=GEOGRAPHY_SCORE,
+        reach=event.reach,
+        need_strength=event.need_strength,
+        actionability=event.actionability,
+        source_confidence=definition.source_confidence,
+        sensitivity_penalty=SENSITIVITY_PENALTY[event.sensitivity],
+    )
+
+
+class _Ingestion:
+    """Writes one run's signals, events, and opportunities inside a single transaction."""
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        source_id: str,
+        run_id: str,
+        definition: SourceDefinition,
+        now: datetime,
+        stats: RunStats,
+    ) -> None:
+        self.session = session
+        self.source_id = source_id
+        self.run_id = run_id
+        self.definition = definition
+        self.now = now
+        self.stats = stats
+
+    async def apply(
+        self,
+        signals: list[NormalizedSignal],
+        events: list[DetectedEvent],
+        min_timely_score: int,
+    ) -> None:
+        stored = await self._store_signals(signals)
+        self.stats.events_detected = len(events)
+        kept_keys: set[str] = set()
+        for event in events:
+            dimensions = timely_dimensions(event, self.definition)
+            if event.sensitivity == Sensitivity.BLOCKED or dimensions.score() < min_timely_score:
+                self.stats.events_below_threshold += 1
+                continue
+            kept_keys.add(event.dedupe_key)
+            rows = [stored[key] for key in event.signal_external_ids if key in stored]
+            cluster = await self._upsert_event(event, dimensions, rows)
+            for concept in concepts_for(event.consumer_needs):
+                await self._upsert_opportunity(cluster, event, concept, dimensions, rows)
+        await self._retire_missing_events(kept_keys)
+
+    async def _store_signals(self, signals: list[NormalizedSignal]) -> dict[str, RawSignal]:
+        """Insert unseen signals; return the stored row for every fetched external id."""
+        hashes = {signal.content_hash for signal in signals}
+        existing = {
+            row.content_hash: row
+            for row in await self.session.scalars(
+                select(RawSignal).where(
+                    RawSignal.source_id == self.source_id, RawSignal.content_hash.in_(hashes)
+                )
+            )
+        }
+        stored: dict[str, RawSignal] = {}
+        for signal in signals:
+            row = existing.get(signal.content_hash)
+            if row is None:
+                row = RawSignal(
+                    source_id=self.source_id,
+                    source_run_id=self.run_id,
+                    external_id=signal.external_id,
+                    canonical_url=signal.canonical_url,
+                    title=signal.title,
+                    permitted_summary=signal.summary,
+                    content_hash=signal.content_hash,
+                    observed_at=signal.observed_at,
+                    raw_payload=signal.facts,
+                )
+                self.session.add(row)
+                existing[signal.content_hash] = row
+                self.stats.new_signals += 1
+            else:
+                self.stats.duplicate_signals += 1
+            stored[signal.external_id] = row
+        await self.session.flush()
+        return stored
+
+    async def _upsert_event(
+        self, event: DetectedEvent, dimensions: TimelyDimensions, rows: list[RawSignal]
+    ) -> EventCluster:
+        cluster = await self.session.scalar(
+            select(EventCluster)
+            .where(
+                EventCluster.dedupe_key == event.dedupe_key,
+                EventCluster.status == EventStatus.ACTIVE,
+            )
+            .options(selectinload(EventCluster.members))
+        )
+        if cluster is None:
+            cluster = EventCluster(
+                source_id=self.source_id,
+                dedupe_key=event.dedupe_key,
+                status=EventStatus.ACTIVE,
+                first_seen_at=self.now,
+                members=[],
+            )
+            self.session.add(cluster)
+            self.stats.events_created += 1
+        else:
+            self.stats.events_updated += 1
+        cluster.event_type = event.event_type
+        cluster.location = event.location
+        cluster.title = event.title
+        cluster.summary = event.summary
+        cluster.consumer_needs = list(event.consumer_needs)
+        cluster.sensitivity = event.sensitivity
+        cluster.confidence = max(0, self.definition.source_confidence - 5 * event.lead_days)
+        cluster.timely_score = dimensions.score()
+        cluster.rule_version = event.rule_version
+        cluster.starts_at = event.starts_at
+        cluster.expires_at = event.expires_at
+        cluster.last_seen_at = self.now
+
+        linked = {member.raw_signal_id for member in cluster.members}
+        for row in rows:
+            if row.id not in linked:
+                cluster.members.append(EventClusterMember(raw_signal_id=row.id))
+        await self.session.flush()
+        return cluster
+
+    async def _upsert_opportunity(
+        self,
+        cluster: EventCluster,
+        event: DetectedEvent,
+        concept: ProductConcept,
+        dimensions: TimelyDimensions,
+        rows: list[RawSignal],
+    ) -> None:
+        opportunity = await self.session.scalar(
+            select(Opportunity)
+            .where(
+                Opportunity.event_cluster_id == cluster.id,
+                Opportunity.concept_key == concept.key,
+            )
+            .options(selectinload(Opportunity.evidence), selectinload(Opportunity.scores))
+        )
+        if opportunity is None:
+            opportunity = Opportunity(
+                event_cluster_id=cluster.id,
+                concept_key=concept.key,
+                reason_type=OpportunityReason.TIMELY,
+                status=OpportunityStatus.ELIGIBLE,
+                is_demo=False,
+                evidence=[],
+                scores=[],
+            )
+            self.session.add(opportunity)
+            self.stats.opportunities_created += 1
+
+        need = NEED_LABELS.get(concept.need, concept.need)
+        opportunity.product_concept = concept.name
+        opportunity.category = concept.category
+        opportunity.target_user = concept.target_user
+        opportunity.location = event.location
+        opportunity.why_now = f"{event.summary} This concept addresses {need}."
+        opportunity.expires_at = event.expires_at
+        opportunity.search_queries = list(concept.search_queries)
+        opportunity.uncertainties = [
+            "No affiliate listing has been matched yet.",
+            *event.uncertainties,
+            "Avoid these claims unless the listing supports them: "
+            + "; ".join(concept.claims_to_avoid)
+            + ".",
+        ]
+
+        seen = {item.raw_signal_id for item in opportunity.evidence}
+        for row in rows:
+            if row.id not in seen:
+                opportunity.evidence.append(
+                    OpportunityEvidence(
+                        raw_signal_id=row.id,
+                        source_name=self.definition.display_name,
+                        source_url=self.definition.attribution_url,
+                        observed_at=row.observed_at,
+                        summary=f"{row.title}. {row.permitted_summary or ''}".strip(),
+                    )
+                )
+
+        score = score_concept(dimensions, concept, event.lead_days, event.sensitivity)
+        latest = max(opportunity.scores, key=lambda item: item.created_at, default=None)
+        if latest is None or _score_key(latest) != _score_values(score):
+            opportunity.scores.append(_snapshot(score, dimensions, event))
+            if latest is not None:
+                self.stats.opportunities_rescored += 1
+        await self.session.flush()
+
+    async def _retire_missing_events(self, kept_keys: set[str]) -> None:
+        """The latest data is the truth: events it no longer supports end now."""
+        statement = select(EventCluster).where(
+            EventCluster.source_id == self.source_id, EventCluster.status == EventStatus.ACTIVE
+        )
+        if kept_keys:
+            statement = statement.where(EventCluster.dedupe_key.not_in(kept_keys))
+        stale = list(await self.session.scalars(statement))
+        for cluster in stale:
+            cluster.status = EventStatus.EXPIRED
+            cluster.expires_at = min(cluster.expires_at, self.now)
+            self.stats.events_retired += 1
+        if stale:
+            await self.session.execute(
+                update(Opportunity)
+                .where(
+                    Opportunity.event_cluster_id.in_([cluster.id for cluster in stale]),
+                    Opportunity.status.in_(OPEN_STATUSES),
+                )
+                .values(status=OpportunityStatus.EXPIRED, expires_at=self.now)
+            )
+
+
+def _snapshot(
+    score: OpportunityScore, dimensions: TimelyDimensions, event: DetectedEvent
+) -> ScoreSnapshot:
+    return ScoreSnapshot(
+        demand=score.demand,
+        execution=score.execution,
+        marketplace_fit_prior=score.marketplace_fit_prior,
+        uncertainty_penalty=score.uncertainty,
+        discovery_priority=score.discovery_priority,
+        timely_score=score.timely,
+        trend_score=score.trend,
+        components={
+            "timely": dimensions.as_dict(),
+            "lead_days": event.lead_days,
+            "sensitivity": event.sensitivity.value,
+            "rule_version": event.rule_version,
+            "catalog_version": CATALOG_VERSION,
+        },
+        version=score.version,
+    )
+
+
+def _score_values(score: OpportunityScore) -> tuple[object, ...]:
+    return (
+        score.version,
+        score.demand,
+        score.execution,
+        score.marketplace_fit_prior,
+        score.uncertainty,
+        score.discovery_priority,
+        score.timely,
+        score.trend,
+    )
+
+
+def _score_key(snapshot: ScoreSnapshot) -> tuple[object, ...]:
+    return (
+        snapshot.version,
+        snapshot.demand,
+        snapshot.execution,
+        snapshot.marketplace_fit_prior,
+        snapshot.uncertainty_penalty,
+        snapshot.discovery_priority,
+        snapshot.timely_score,
+        snapshot.trend_score,
+    )
+
+
 async def _finish_run(
     sessions: async_sessionmaker[AsyncSession],
     run_id: str,
@@ -174,249 +429,3 @@ async def _finish_run(
         run.stats = asdict(stats)
         run.error = error
         await session.commit()
-
-
-async def _store_signals(
-    session: AsyncSession,
-    source_id: str,
-    run_id: str,
-    signals: list[NormalizedSignal],
-    stats: RunStats,
-) -> dict[str, RawSignal]:
-    """Insert unseen signals; return the stored row for every fetched external id."""
-    hashes = {signal.content_hash for signal in signals}
-    existing = {
-        row.content_hash: row
-        for row in await session.scalars(
-            select(RawSignal).where(
-                RawSignal.source_id == source_id, RawSignal.content_hash.in_(hashes)
-            )
-        )
-    }
-    stored: dict[str, RawSignal] = {}
-    for signal in signals:
-        row = existing.get(signal.content_hash)
-        if row is None:
-            row = RawSignal(
-                source_id=source_id,
-                source_run_id=run_id,
-                external_id=signal.external_id,
-                canonical_url=signal.canonical_url,
-                title=signal.title,
-                permitted_summary=signal.summary,
-                content_hash=signal.content_hash,
-                observed_at=signal.observed_at,
-                raw_payload=signal.facts,
-            )
-            session.add(row)
-            existing[signal.content_hash] = row
-            stats.new_signals += 1
-        else:
-            stats.duplicate_signals += 1
-        stored[signal.external_id] = row
-    await session.flush()
-    return stored
-
-
-def _timely_dimensions(event: DetectedEvent, definition: SourceDefinition) -> TimelyDimensions:
-    return TimelyDimensions(
-        # Scored right after fetching. Stale data is surfaced through source health instead.
-        freshness=100,
-        geography=GEOGRAPHY_SCORE,
-        reach=event.reach,
-        need_strength=event.need_strength,
-        actionability=event.actionability,
-        source_confidence=definition.source_confidence,
-        sensitivity_penalty=SENSITIVITY_PENALTY[event.sensitivity],
-    )
-
-
-async def _upsert_event(
-    session: AsyncSession,
-    source_id: str,
-    definition: SourceDefinition,
-    event: DetectedEvent,
-    stored: dict[str, RawSignal],
-    now: datetime,
-    stats: RunStats,
-) -> None:
-    dimensions = _timely_dimensions(event, definition)
-    timely = dimensions.score()
-    cluster = await session.scalar(
-        select(EventCluster)
-        .where(
-            EventCluster.dedupe_key == event.dedupe_key, EventCluster.status == EventStatus.ACTIVE
-        )
-        .options(selectinload(EventCluster.members))
-    )
-    if cluster is None:
-        cluster = EventCluster(
-            source_id=source_id,
-            dedupe_key=event.dedupe_key,
-            status=EventStatus.ACTIVE,
-            first_seen_at=now,
-            members=[],
-        )
-        session.add(cluster)
-        stats.events_created += 1
-    else:
-        stats.events_updated += 1
-    cluster.event_type = event.event_type
-    cluster.location = event.location
-    cluster.title = event.title
-    cluster.summary = event.summary
-    cluster.consumer_needs = list(event.consumer_needs)
-    cluster.sensitivity = event.sensitivity
-    cluster.confidence = max(0, definition.source_confidence - 5 * event.lead_days)
-    cluster.timely_score = timely
-    cluster.rule_version = event.rule_version
-    cluster.starts_at = event.starts_at
-    cluster.expires_at = event.expires_at
-    cluster.last_seen_at = now
-
-    signal_rows = [stored[key] for key in event.signal_external_ids if key in stored]
-    linked = {member.raw_signal_id for member in cluster.members}
-    for row in signal_rows:
-        if row.id not in linked:
-            cluster.members.append(EventClusterMember(raw_signal_id=row.id))
-    await session.flush()
-
-    for concept in concepts_for(event.consumer_needs):
-        await _upsert_opportunity(
-            session, cluster, definition, event, concept, dimensions, signal_rows, stats
-        )
-
-
-async def _upsert_opportunity(
-    session: AsyncSession,
-    cluster: EventCluster,
-    definition: SourceDefinition,
-    event: DetectedEvent,
-    concept: ProductConcept,
-    dimensions: TimelyDimensions,
-    signal_rows: list[RawSignal],
-    stats: RunStats,
-) -> None:
-    opportunity = await session.scalar(
-        select(Opportunity)
-        .where(Opportunity.event_cluster_id == cluster.id, Opportunity.concept_key == concept.key)
-        .options(selectinload(Opportunity.evidence), selectinload(Opportunity.scores))
-    )
-    if opportunity is None:
-        opportunity = Opportunity(
-            event_cluster_id=cluster.id,
-            concept_key=concept.key,
-            reason_type=OpportunityReason.TIMELY,
-            status=OpportunityStatus.ELIGIBLE,
-            is_demo=False,
-            evidence=[],
-            scores=[],
-        )
-        session.add(opportunity)
-        stats.opportunities_created += 1
-
-    need = NEED_LABELS.get(concept.need, concept.need)
-    opportunity.product_concept = concept.name
-    opportunity.category = concept.category
-    opportunity.target_user = concept.target_user
-    opportunity.location = event.location
-    opportunity.why_now = f"{event.summary} This concept addresses {need}."
-    opportunity.expires_at = event.expires_at
-    opportunity.search_queries = list(concept.search_queries)
-    opportunity.uncertainties = [
-        "No affiliate listing has been matched yet.",
-        *event.uncertainties,
-        "Avoid these claims unless the listing supports them: "
-        + "; ".join(concept.claims_to_avoid)
-        + ".",
-    ]
-
-    seen = {item.raw_signal_id for item in opportunity.evidence}
-    for row in signal_rows:
-        if row.id not in seen:
-            opportunity.evidence.append(
-                OpportunityEvidence(
-                    raw_signal_id=row.id,
-                    source_name=definition.display_name,
-                    source_url=_attribution_url(definition),
-                    observed_at=row.observed_at,
-                    summary=f"{row.title}. {row.permitted_summary or ''}".strip(),
-                )
-            )
-
-    timely = dimensions.score()
-    demand = demand_score(timely, None)
-    uncertainty = uncertainty_penalty(event.lead_days, event.sensitivity)
-    snapshot = ScoreSnapshot(
-        demand=demand,
-        execution=concept.execution,
-        marketplace_fit_prior=concept.marketplace_fit_prior,
-        uncertainty_penalty=uncertainty,
-        discovery_priority=discovery_priority(
-            demand, concept.execution, concept.marketplace_fit_prior, uncertainty
-        ),
-        timely_score=timely,
-        trend_score=None,
-        components={
-            "timely": dimensions.as_dict(),
-            "lead_days": event.lead_days,
-            "sensitivity": event.sensitivity.value,
-            "rule_version": event.rule_version,
-            "catalog_version": CATALOG_VERSION,
-        },
-        version=SCORE_VERSION,
-    )
-    latest = max(opportunity.scores, key=lambda item: item.created_at, default=None)
-    if latest is None or _score_key(latest) != _score_key(snapshot):
-        opportunity.scores.append(snapshot)
-        if latest is not None:
-            stats.opportunities_rescored += 1
-    await session.flush()
-
-
-def _score_key(snapshot: ScoreSnapshot) -> tuple[object, ...]:
-    return (
-        snapshot.version,
-        snapshot.demand,
-        snapshot.execution,
-        snapshot.marketplace_fit_prior,
-        snapshot.uncertainty_penalty,
-        snapshot.discovery_priority,
-        snapshot.timely_score,
-        snapshot.trend_score,
-    )
-
-
-def _attribution_url(definition: SourceDefinition) -> str | None:
-    if definition.terms_url and definition.terms_url.startswith("https://open-meteo.com"):
-        return "https://open-meteo.com/"
-    return definition.terms_url
-
-
-async def _retire_missing_events(
-    session: AsyncSession,
-    source_id: str,
-    kept_keys: set[str],
-    now: datetime,
-    stats: RunStats,
-) -> None:
-    """The latest forecast is the truth: events it no longer supports end now."""
-    statement = select(EventCluster).where(
-        EventCluster.source_id == source_id, EventCluster.status == EventStatus.ACTIVE
-    )
-    if kept_keys:
-        statement = statement.where(EventCluster.dedupe_key.not_in(kept_keys))
-    stale = list(await session.scalars(statement))
-    for cluster in stale:
-        cluster.status = EventStatus.EXPIRED
-        cluster.expires_at = min(cluster.expires_at, now)
-        stats.events_retired += 1
-    if stale:
-        await session.execute(
-            update(Opportunity)
-            .where(
-                Opportunity.event_cluster_id.in_([cluster.id for cluster in stale]),
-                Opportunity.status.in_(OPEN_STATUSES),
-            )
-            .values(status=OpportunityStatus.EXPIRED, expires_at=now)
-        )

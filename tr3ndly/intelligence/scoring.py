@@ -7,6 +7,7 @@ Component inputs are stored with every snapshot so a formula can be replayed lat
 from dataclasses import asdict, dataclass
 
 from tr3ndly.db.models import Sensitivity
+from tr3ndly.intelligence.catalog import ProductConcept
 
 SCORE_VERSION = "discovery-v1"
 
@@ -61,6 +62,41 @@ def uncertainty_penalty(lead_days: int, sensitivity: Sensitivity) -> int:
     if sensitivity in (Sensitivity.MEDIUM, Sensitivity.HIGH):
         penalty += 5
     return clamp(penalty)
+
+
+@dataclass(frozen=True)
+class OpportunityScore:
+    timely: int
+    trend: int | None
+    demand: int
+    execution: int
+    marketplace_fit_prior: int
+    uncertainty: int
+    discovery_priority: int
+    version: str = SCORE_VERSION
+
+
+def score_concept(
+    timely: TimelyDimensions,
+    concept: ProductConcept,
+    lead_days: int,
+    sensitivity: Sensitivity,
+) -> OpportunityScore:
+    """Discovery priority for a timely-only concept before any listing is matched."""
+    timely_score = timely.score()
+    demand = demand_score(timely_score, None)
+    uncertainty = uncertainty_penalty(lead_days, sensitivity)
+    return OpportunityScore(
+        timely=timely_score,
+        trend=None,
+        demand=demand,
+        execution=concept.execution,
+        marketplace_fit_prior=concept.marketplace_fit_prior,
+        uncertainty=uncertainty,
+        discovery_priority=discovery_priority(
+            demand, concept.execution, concept.marketplace_fit_prior, uncertainty
+        ),
+    )
 
 
 def discovery_priority(

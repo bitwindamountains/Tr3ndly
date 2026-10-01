@@ -10,15 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.app.database import get_session
 from tr3ndly import __version__
 from tr3ndly.config import Settings, get_settings
+from tr3ndly.db.models import OpportunityReason
 from tr3ndly.db.session import dispose_engine
 from tr3ndly.db.types import utcnow
 from tr3ndly.log import configure_logging
 from tr3ndly.operations import recent_runs, source_statuses
-from tr3ndly.opportunities.repository import (
+from tr3ndly.opportunities.decisions import (
     DecisionNotAllowed,
     OpportunityNotFound,
-    OpportunityRepository,
+    record_decision,
 )
+from tr3ndly.opportunities.queries import OpportunityQueries
 from tr3ndly.schemas import (
     DecisionCreate,
     DecisionResponse,
@@ -69,9 +71,16 @@ async def health() -> HealthResponse:
 
 
 @app.get("/today", response_model=TodayResponse, tags=["opportunities"])
-async def today(session: DatabaseSession, config: AppSettings) -> TodayResponse:
+async def today(
+    session: DatabaseSession,
+    config: AppSettings,
+    location: Annotated[str | None, Query(max_length=160)] = None,
+    reason_type: OpportunityReason | None = None,
+) -> TodayResponse:
     """Return the ranked opportunity queue, timely signals, and source health."""
-    return await OpportunityRepository(session, config).get_today()
+    return await OpportunityQueries(session, config).today(
+        location=location, reason_type=reason_type
+    )
 
 
 @app.get(
@@ -84,7 +93,7 @@ async def opportunity_detail(
     session: DatabaseSession,
     config: AppSettings,
 ) -> OpportunityDetail:
-    opportunity = await OpportunityRepository(session, config).get_detail(opportunity_id)
+    opportunity = await OpportunityQueries(session, config).detail(opportunity_id)
     if opportunity is None:
         raise HTTPException(status_code=404, detail="Opportunity not found")
     return opportunity
@@ -100,10 +109,9 @@ async def create_decision(
     opportunity_id: str,
     payload: DecisionCreate,
     session: DatabaseSession,
-    config: AppSettings,
 ) -> DecisionResponse:
     try:
-        return await OpportunityRepository(session, config).record_decision(opportunity_id, payload)
+        return await record_decision(session, opportunity_id, payload)
     except OpportunityNotFound:
         raise HTTPException(status_code=404, detail="Opportunity not found") from None
     except DecisionNotAllowed as error:

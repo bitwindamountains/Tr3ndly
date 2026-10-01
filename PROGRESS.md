@@ -57,6 +57,17 @@ A pre-refactor backup was taken because this folder is not a git repository. It 
 ### Verified live
 `--once` against real Open-Meteo created 3 HEAT events (Manila, Cebu, Davao) and 12 opportunities. A rerun found 9 duplicates and 0 new rows. The API and the built web app rendered the live queue and detail pages.
 
+## Round 2 (2026-10-02)
+- **git:** initialized the repository on `main`. `d9bfb34` is the pre-refactor baseline and `f617d1b` is the automation refactor. `.gitattributes` forces LF line endings to match `.editorconfig`.
+- **Refactor:**
+  - The pipeline is a per-run `_Ingestion` class, replacing functions that took eight parameters.
+  - Opportunity scoring moved to `scoring.score_concept`.
+  - `SourceDefinition.attribution_url` replaces a hard-coded Open-Meteo check.
+  - The repository is split into `queries.py`, `decisions.py` and `views.py`.
+  - Evidence is grouped by the raw signal's external id instead of by parsing the summary string.
+- **Feature:** `/today` takes `?location=` and `?reason_type=` and returns `locations` for filter controls.
+- **Plan for the rest of round 2:** operator-token auth with decisions sent through a server action; a web Operations page, working nav and filters, and pinned dependencies; CI.
+
 ## Next
 - **Not fixed: open review items.**
   - The API has no auth, and CORS allows credentials. That is fine locally; before deploying, add a server-side operator token, with decisions sent through a Next server action.

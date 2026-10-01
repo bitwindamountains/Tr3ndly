@@ -118,6 +118,8 @@ class TodayResponse(BaseModel):
     mode: Literal["demo", "live"] = "demo"
     source_health: SourceHealth = SourceHealth.DEMO
     sources: list[SourceStatus] = Field(default_factory=list)
+    # Locations with open opportunities, for filter controls; unaffected by the active filter.
+    locations: list[str] = Field(default_factory=list)
     signals: list[TimelySignal]
     opportunities: list[OpportunitySummary]
 

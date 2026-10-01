@@ -39,7 +39,7 @@ To check for schema drift, run `alembic check` against a freshly upgraded databa
 
 **Pipeline** ([tr3ndly/pipeline.py](tr3ndly/pipeline.py)). One source run is: fetch → normalize → exact dedupe → detect events → threshold gate → needs → product concepts → score. Each run writes a `source_runs` row with stats or an error. The pipeline never changes an operator decision. Each run also retires events that the latest data no longer supports.
 
-**Sources** (`tr3ndly/sources/`). Adapters implement `fetch` and `normalize` only: no persistence and no AI. They are registered in `build_adapters()`. `ENABLED_SOURCES` (comma-separated) decides which ones run. Open-Meteo's free API is non-commercial, so production refuses it without `OPEN_METEO_API_KEY`.
+**Sources** (`tr3ndly/sources/`). Adapters implement `fetch` and `normalize` only: no persistence and no AI. Each `SourceDefinition` declares its licence, attribution URL, poll interval and confidence. They are registered in `build_adapters()`. `ENABLED_SOURCES` (comma-separated) decides which ones run. Open-Meteo's free API is non-commercial, so production refuses it without `OPEN_METEO_API_KEY`.
 
 **Intelligence** (`tr3ndly/intelligence/`):
 - `weather_rules.py` maps forecast facts to events deterministically.
@@ -54,7 +54,12 @@ Rules, the catalog, and the score each carry a version string. Bump it when beha
 - Migrations must be reversible. SQLite needs `op.batch_alter_table`.
 - Evidence, score snapshots, and decisions are append-only.
 
-**Today** ([tr3ndly/opportunities/repository.py](tr3ndly/opportunities/repository.py)). It is in live mode once any source run has succeeded, and then demo cards are hidden. It shows at most 2 cards per event and 8 in total, plus the top 3 signals. `source_health` is derived from run recency; see [tr3ndly/operations.py](tr3ndly/operations.py).
+**Opportunities** (`tr3ndly/opportunities/`):
+- `queries.py` is the read side.
+- `decisions.py` is the write side and holds the state rules.
+- `views.py` maps ORM rows to schemas.
+
+**Today.** It is in live mode once any source run has succeeded, and then demo cards are hidden. It shows at most 2 cards per event and 8 in total, plus the top 3 signals. It takes optional `location` and `reason_type` filters. `source_health` is derived from run recency; see [tr3ndly/operations.py](tr3ndly/operations.py).
 
 **Philippine time.** `tr3ndly.geo.MANILA` is a fixed UTC+8 offset. The Philippines has no DST, and Windows Python has no tzdata.
 

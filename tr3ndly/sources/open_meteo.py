@@ -21,6 +21,7 @@ DEFINITION = SourceDefinition(
     access_method="official_api",
     terms_url="https://open-meteo.com/en/terms",
     attribution="Weather data by Open-Meteo.com (CC BY 4.0)",
+    attribution_url="https://open-meteo.com/",
     poll_interval=timedelta(hours=3),
     # A forecast, not an official warning.
     source_confidence=70,

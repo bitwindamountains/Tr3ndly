@@ -48,3 +48,12 @@ def test_operations_endpoints_report_runs(live_client: TestClient) -> None:
     assert sources[0]["last_success_at"] is not None
     assert runs[0]["status"] == "succeeded"
     assert runs[0]["stats"]["opportunities_created"] == 9
+
+
+def test_today_filters_by_location_and_lists_all_locations(live_client: TestClient) -> None:
+    payload = live_client.get("/today", params={"location": "Cebu City"}).json()
+
+    assert payload["locations"] == ["Cebu City", "Metro Manila"]
+    assert {item["location"] for item in payload["opportunities"]} == {"Cebu City"}
+    assert [signal["location"] for signal in payload["signals"]] == ["Cebu City"]
+    assert live_client.get("/today", params={"reason_type": "trend"}).json()["opportunities"] == []
