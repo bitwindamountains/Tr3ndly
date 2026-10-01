@@ -20,6 +20,7 @@ from tr3ndly.db.models import (
 from tr3ndly.db.types import utcnow
 from tr3ndly.intelligence.catalog import NEED_LABELS
 from tr3ndly.operations import has_live_data, overall_health, source_statuses
+from tr3ndly.opportunities.decisions import is_decidable
 from tr3ndly.opportunities.views import latest_score, to_decision, to_summary
 from tr3ndly.schemas import OpportunityDetail, TimelySignal, TodayResponse
 
@@ -66,7 +67,10 @@ class OpportunityQueries:
             opportunities=[to_summary(item) for item in _diverse(candidates)],
         )
 
-    async def detail(self, opportunity_id: str) -> OpportunityDetail | None:
+    async def detail(
+        self, opportunity_id: str, now: datetime | None = None
+    ) -> OpportunityDetail | None:
+        now = now or utcnow()
         opportunity = await self.session.scalar(
             select(Opportunity)
             .where(Opportunity.id == opportunity_id)
@@ -82,6 +86,7 @@ class OpportunityQueries:
         return OpportunityDetail(
             **to_summary(opportunity).model_dump(),
             status=opportunity.status.value,
+            decidable=is_decidable(opportunity, now),
             decisions=[to_decision(item) for item in decisions],
         )
 

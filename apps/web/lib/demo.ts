@@ -8,6 +8,7 @@ export const localDemoData: TodayData = {
   mode: "demo",
   source_health: "demo",
   sources: [],
+  locations: ["Metro Manila"],
   signals: [
     {
       id: "signal_demo_heat",

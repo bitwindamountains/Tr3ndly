@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Annotated, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -15,8 +15,10 @@ class Settings(BaseSettings):
     app_name: str = "Tr3ndly API"
     environment: str = "development"
     database_url: str = "sqlite+aiosqlite:///./tr3ndly.db"
-    web_origin: str = "http://localhost:3000"
     log_level: str = Field(default="INFO", pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
+
+    # Bearer token required on every API route except /health. Optional in development only.
+    operator_token: SecretStr | None = None
 
     # Comma-separated source slugs the worker may run, e.g. "open-meteo".
     enabled_sources: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["open-meteo"])
@@ -35,12 +37,13 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
-    def refuse_unlicensed_production_sources(self) -> Self:
-        if (
-            self.environment == "production"
-            and "open-meteo" in self.enabled_sources
-            and not self.open_meteo_api_key
-        ):
+    def refuse_unsafe_production_settings(self) -> Self:
+        if self.environment != "production":
+            return self
+        token = self.operator_token.get_secret_value() if self.operator_token else ""
+        if len(token) < 32:
+            raise ValueError("OPERATOR_TOKEN of at least 32 characters is required in production")
+        if "open-meteo" in self.enabled_sources and not self.open_meteo_api_key:
             raise ValueError(
                 "open-meteo needs OPEN_METEO_API_KEY in production; the free API is non-commercial"
             )

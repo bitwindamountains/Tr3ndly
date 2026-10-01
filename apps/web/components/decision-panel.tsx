@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useTransition } from "react";
 
-type DecisionValue = "accepted" | "rejected" | "deferred" | "insufficient_evidence";
+import { recordDecision } from "@/app/actions";
+import type { Decision } from "@/lib/types";
+
+type DecisionValue = Decision["decision"];
 
 const actions: Array<{ value: DecisionValue; label: string; reason: string }> = [
   { value: "accepted", label: "Accept", reason: "useful_opportunity" },
@@ -16,41 +18,40 @@ const actions: Array<{ value: DecisionValue; label: string; reason: string }> = 
   },
 ];
 
-export function DecisionPanel({ opportunityId }: { opportunityId: string }) {
-  const router = useRouter();
+export function DecisionPanel({ opportunityId, closed }: { opportunityId: string; closed: boolean }) {
+  const [isPending, startTransition] = useTransition();
   const [pending, setPending] = useState<DecisionValue | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  async function decide(decision: DecisionValue, reasonCode: string) {
+  function decide(decision: DecisionValue, reasonCode: string) {
     setPending(decision);
     setMessage(null);
-    try {
-      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-      const response = await fetch(`${baseUrl}/opportunities/${opportunityId}/decision`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ decision, reason_code: reasonCode }),
-      });
-      if (!response.ok) throw new Error(`Decision failed with ${response.status}`);
-      setMessage("Decision recorded.");
-      router.refresh();
-    } catch {
-      setMessage("Could not record the decision. Check the API connection.");
-    } finally {
-      setPending(null);
-    }
+    startTransition(async () => {
+      try {
+        const result = await recordDecision(opportunityId, decision, reasonCode);
+        setMessage(result.message);
+      } catch {
+        setMessage("Your session has expired. Sign in again to record decisions.");
+      } finally {
+        setPending(null);
+      }
+    });
   }
 
   return (
     <section className="decision-panel" aria-labelledby="decision-heading">
       <p className="eyebrow">Operator decision</p>
       <h2 id="decision-heading">Is this worth a marketplace search?</h2>
-      <p>Your response becomes labeled feedback for future recommendation quality.</p>
+      <p>
+        {closed
+          ? "This opportunity is closed to new decisions."
+          : "Your response becomes labeled feedback for future recommendation quality."}
+      </p>
       <div className="decision-actions">
         {actions.map((action) => (
           <button
             className={`decision-${action.value}`}
-            disabled={pending !== null}
+            disabled={closed || isPending}
             key={action.value}
             onClick={() => decide(action.value, action.reason)}
             type="button"
@@ -63,4 +64,3 @@ export function DecisionPanel({ opportunityId }: { opportunityId: string }) {
     </section>
   );
 }
-

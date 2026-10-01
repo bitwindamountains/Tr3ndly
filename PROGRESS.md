@@ -66,13 +66,27 @@ A pre-refactor backup was taken because this folder is not a git repository. It 
   - The repository is split into `queries.py`, `decisions.py` and `views.py`.
   - Evidence is grouped by the raw signal's external id instead of by parsing the summary string.
 - **Feature:** `/today` takes `?location=` and `?reason_type=` and returns `locations` for filter controls.
-- **Plan for the rest of round 2:** operator-token auth with decisions sent through a server action; a web Operations page, working nav and filters, and pinned dependencies; CI.
+- **Auth:**
+  - The API takes an `OPERATOR_TOKEN` bearer token on all routes except `/health`. Production refuses to start without a token of 32+ characters. CORS is removed.
+  - The web app has single-operator sign-in: an HMAC-signed httpOnly cookie, the `proxy.ts` gate, and `/login`.
+  - Decisions go through a server action that checks the session and calls the API server-side, so the token never reaches the browser. The new dependency is `server-only`.
+- **Web:**
+  - a shared header with working Today and Operations nav plus sign-out; the dead buttons are removed;
+  - location and reason filter chips on Today;
+  - a `/operations` page listing sources and recent runs;
+  - the decision panel is disabled when the API says the opportunity is not `decidable`;
+  - dependencies are pinned (they were `latest`).
+- **Verified end to end** on a scratch database with auth on:
+  - the API returns 401 without the token;
+  - anonymous visits, forged cookies, and direct server-action POSTs are redirected to `/login`;
+  - invalid action input is rejected;
+  - in real Chrome: wrong password, sign-in, Operations, filtering by Cebu, Defer (recorded and shown in the audit trail), and sign-out all worked.
+- **Tests:** 52 Python and 6 web.
 
 ## Next
 - **Not fixed: open review items.**
-  - The API has no auth, and CORS allows credentials. That is fine locally; before deploying, add a server-side operator token, with decisions sent through a Next server action.
-  - Web dependencies are pinned to `latest`; pin real versions.
-  - The Today nav (Results, Operations) and the filter button do nothing.
+  - Sign-in has no rate limiting. Use a long `OPERATOR_PASSWORD`, and add throttling before any public exposure.
+  - `next.config.ts` uses `output: "standalone"`, so production should run `node .next/standalone/server.js` rather than `next start`.
   - A missing opportunity returns HTTP 200 with the not-found UI, because `loading.tsx` streams before `notFound()`.
   - There is no CI workflow. Add GitHub Actions for pytest, ruff, the migration test and the web checks.
 - **Product, per plan:**

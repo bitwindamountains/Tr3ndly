@@ -65,6 +65,20 @@ def test_production_refuses_the_non_commercial_free_api() -> None:
     import pytest
     from pydantic import ValidationError
 
+    token = "t" * 32
     with pytest.raises(ValidationError, match="non-commercial"):
-        Settings(environment="production", enabled_sources=["open-meteo"])
-    Settings(environment="production", enabled_sources=["open-meteo"], open_meteo_api_key="k")
+        Settings(environment="production", enabled_sources=["open-meteo"], operator_token=token)
+    Settings(
+        environment="production",
+        enabled_sources=["open-meteo"],
+        open_meteo_api_key="k",
+        operator_token=token,
+    )
+
+
+def test_production_requires_a_long_operator_token() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="OPERATOR_TOKEN"):
+        Settings(environment="production", enabled_sources=[], operator_token="short")

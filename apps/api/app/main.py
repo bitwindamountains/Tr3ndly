@@ -3,10 +3,10 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 import structlog
-from fastapi import Depends, FastAPI, HTTPException, Query, status
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.api.app.auth import require_operator
 from apps.api.app.database import get_session
 from tr3ndly import __version__
 from tr3ndly.config import Settings, get_settings
@@ -52,13 +52,9 @@ app = FastAPI(
     description="Evidence-to-opportunity API for Tr3ndly.",
     lifespan=lifespan,
 )
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[settings.web_origin],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
-    allow_headers=["*"],
-)
+# Only the Next.js server calls the API, so there is no CORS. Everything except /health
+# requires the operator token when one is configured.
+protected = APIRouter(dependencies=[Depends(require_operator)])
 
 
 @app.get("/health", response_model=HealthResponse, tags=["operations"])
@@ -70,7 +66,7 @@ async def health() -> HealthResponse:
     )
 
 
-@app.get("/today", response_model=TodayResponse, tags=["opportunities"])
+@protected.get("/today", response_model=TodayResponse, tags=["opportunities"])
 async def today(
     session: DatabaseSession,
     config: AppSettings,
@@ -83,7 +79,7 @@ async def today(
     )
 
 
-@app.get(
+@protected.get(
     "/opportunities/{opportunity_id}",
     response_model=OpportunityDetail,
     tags=["opportunities"],
@@ -99,7 +95,7 @@ async def opportunity_detail(
     return opportunity
 
 
-@app.post(
+@protected.post(
     "/opportunities/{opportunity_id}/decision",
     response_model=DecisionResponse,
     status_code=status.HTTP_201_CREATED,
@@ -118,14 +114,17 @@ async def create_decision(
         raise HTTPException(status_code=409, detail=str(error)) from None
 
 
-@app.get("/operations/sources", response_model=list[SourceStatus], tags=["operations"])
+@protected.get("/operations/sources", response_model=list[SourceStatus], tags=["operations"])
 async def operations_sources(session: DatabaseSession, config: AppSettings) -> list[SourceStatus]:
     return await source_statuses(session, config, utcnow())
 
 
-@app.get("/operations/runs", response_model=list[SourceRunView], tags=["operations"])
+@protected.get("/operations/runs", response_model=list[SourceRunView], tags=["operations"])
 async def operations_runs(
     session: DatabaseSession,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[SourceRunView]:
     return await recent_runs(session, limit)
+
+
+app.include_router(protected)

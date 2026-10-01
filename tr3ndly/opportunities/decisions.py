@@ -26,6 +26,10 @@ DECIDABLE = (
 )
 
 
+def is_decidable(opportunity: Opportunity, now: datetime) -> bool:
+    return opportunity.status in DECIDABLE and opportunity.expires_at > now
+
+
 class OpportunityNotFound(Exception):
     pass
 

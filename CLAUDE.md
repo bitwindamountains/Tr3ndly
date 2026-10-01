@@ -30,7 +30,7 @@ Checks:
 ```powershell
 .venv\Scripts\python.exe -m pytest
 .venv\Scripts\python.exe -m ruff check . ; .venv\Scripts\python.exe -m ruff format --check .
-npm.cmd run typecheck:web ; npm.cmd run test:web ; npm.cmd run build:web
+npm.cmd run lint:web ; npm.cmd run typecheck:web ; npm.cmd run test:web ; npm.cmd run build:web
 ```
 
 To check for schema drift, run `alembic check` against a freshly upgraded database. `tests/db/test_migrations.py` runs upgrade, downgrade, upgrade, and a drift check.
@@ -60,6 +60,15 @@ Rules, the catalog, and the score each carry a version string. Bump it when beha
 - `views.py` maps ORM rows to schemas.
 
 **Today.** It is in live mode once any source run has succeeded, and then demo cards are hidden. It shows at most 2 cards per event and 8 in total, plus the top 3 signals. It takes optional `location` and `reason_type` filters. `source_health` is derived from run recency; see [tr3ndly/operations.py](tr3ndly/operations.py).
+
+**Auth (deny by default once configured):**
+- **API.** Every route except `/health` sits on the `protected` router (`apps/api/app/auth.py`). When `OPERATOR_TOKEN` is set, those routes require it as a bearer token. Production refuses to start without a token of 32+ characters. There is no CORS: only the Next.js server calls the API.
+- **Web.** Only `lib/api.ts` (marked `server-only`) talks to the API, using `API_OPERATOR_TOKEN`. Web env lives in `apps/web/.env.local`; see `apps/web/.env.example`.
+- **Operator sign-in.** Setting `OPERATOR_PASSWORD` enables it. `SESSION_SECRET` signs an HMAC cookie (`lib/session.ts`). `proxy.ts` (Next 16's name for middleware) gates pages.
+- **Server actions.** Every one in `app/actions.ts` must call `assertOperator()` first, because server actions are reachable by direct POST.
+- **Domain rules stay server-side.** For example, the API returns `decidable` and the UI never recomputes it.
+
+**Next 16 specifics.** `error.tsx` receives `retry`, not `reset`. Use `refresh()` from `next/cache` after mutations. The `react-hooks/purity` lint rule forbids `Date.now()` during render. Read `node_modules/next/dist/docs/` before using a Next API.
 
 **Philippine time.** `tr3ndly.geo.MANILA` is a fixed UTC+8 offset. The Philippines has no DST, and Windows Python has no tzdata.
 

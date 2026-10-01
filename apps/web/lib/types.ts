@@ -43,6 +43,7 @@ export interface Decision {
 
 export interface OpportunityDetail extends Opportunity {
   status: string;
+  decidable: boolean;
   decisions: Decision[];
 }
 
@@ -62,6 +63,7 @@ export interface TodayData {
   mode: "demo" | "live";
   source_health: "healthy" | "degraded" | "demo";
   sources: SourceStatus[];
+  locations: string[];
   signals: Array<{
     id: string;
     headline: string;
@@ -75,4 +77,19 @@ export interface TodayData {
     expires_at: string;
   }>;
   opportunities: Opportunity[];
+}
+
+export interface TodayFilters {
+  location?: string;
+  reason_type?: ReasonType;
+}
+
+export interface SourceRun {
+  id: string;
+  source: string;
+  status: "running" | "succeeded" | "failed";
+  started_at: string;
+  finished_at: string | null;
+  error: string | null;
+  stats: Record<string, number>;
 }

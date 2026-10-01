@@ -2,8 +2,8 @@ import { ArrowLeft, Clock3, MapPin, Search, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { Brand } from "@/components/brand";
 import { DecisionPanel } from "@/components/decision-panel";
+import { SiteHeader } from "@/components/site-header";
 import { getOpportunity } from "@/lib/api";
 
 export default async function OpportunityPage({
@@ -17,10 +17,8 @@ export default async function OpportunityPage({
 
   return (
     <main className="shell detail-shell">
-      <header className="detail-header">
-        <Brand />
-        <Link href="/"><ArrowLeft size={15} /> Back to Today</Link>
-      </header>
+      <SiteHeader />
+      <Link className="back-link" href="/"><ArrowLeft size={15} /> Back to Today</Link>
 
       <section className="detail-hero">
         <div>
@@ -86,7 +84,7 @@ export default async function OpportunityPage({
         </div>
 
         <aside>
-          <DecisionPanel opportunityId={opportunity.id} />
+          <DecisionPanel closed={!opportunity.decidable} opportunityId={opportunity.id} />
           <section className="detail-card decision-history">
             <p className="eyebrow">Audit trail</p>
             <h2>Recent decisions</h2>

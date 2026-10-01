@@ -34,7 +34,19 @@ npm.cmd install
 npm.cmd run dev:web
 ```
 
-Open http://localhost:3000. The API runs at http://localhost:8000 and exposes OpenAPI documentation at http://localhost:8000/docs.
+Open http://localhost:3000 for Today and http://localhost:3000/operations for source health and run history. The API runs at http://localhost:8000 and exposes OpenAPI documentation at http://localhost:8000/docs.
+
+### Security
+
+Locally, both apps are open unless you configure the secrets. Before exposing them anywhere:
+
+- **API (`.env`):** set `OPERATOR_TOKEN` to 32+ random characters. Every route except `/health` then requires `Authorization: Bearer <token>`. `ENVIRONMENT=production` refuses to start without it.
+- **Web (`apps/web/.env.local`, see `apps/web/.env.example`):**
+  - set `API_OPERATOR_TOKEN` to the same token;
+  - set `OPERATOR_PASSWORD`, which enables the sign-in page;
+  - set `SESSION_SECRET` to 32+ random characters.
+
+The browser never talks to the API directly. Pages and decisions go through the Next.js server, so the token never reaches the browser.
 
 ## Checks
 
@@ -50,4 +62,4 @@ npm.cmd run build:web
 
 ## Configuration
 
-Copy `.env.example` to `.env` and adjust it. Do not commit `.env`.
+Copy `.env.example` to `.env` (API and worker) and `apps/web/.env.example` to `apps/web/.env.local` (web), then adjust them. Do not commit either file.

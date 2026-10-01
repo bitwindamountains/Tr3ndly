@@ -1,32 +1,25 @@
-import { Activity, AlertTriangle, Bell, ChevronDown, CircleDot, Clock3, DatabaseZap, SlidersHorizontal } from "lucide-react";
+import { Activity, AlertTriangle, CircleDot, Clock3, DatabaseZap } from "lucide-react";
 
-import type { SourceStatus, TodayData } from "@/lib/types";
-import { Brand } from "./brand";
+import { describeSource, formatPht } from "@/lib/format";
+import type { TodayData, TodayFilters } from "@/lib/types";
 import { OpportunityCard } from "./opportunity-card";
+import { SiteHeader } from "./site-header";
+import { TodayFilterBar } from "./today-filters";
 
-export function TodayView({ data, apiConnected }: { data: TodayData; apiConnected: boolean }) {
-  const generatedAt = new Intl.DateTimeFormat("en-PH", {
-    timeZone: "Asia/Manila",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(data.generated_at));
+export function TodayView({
+  data,
+  apiConnected,
+  filters,
+}: {
+  data: TodayData;
+  apiConnected: boolean;
+  filters: TodayFilters;
+}) {
+  const unhealthy = data.sources.filter((source) => source.state !== "healthy" && source.state !== "disabled");
 
   return (
     <main className="shell">
-      <header className="topbar">
-        <Brand />
-        <nav aria-label="Primary navigation">
-          <a className="active" href="#today">Today</a>
-          <a href="#results">Results</a>
-          <a href="#operations">Operations</a>
-        </nav>
-        <div className="header-actions">
-          <button className="icon-button" aria-label="Notifications"><Bell size={18} /></button>
-          <button className="avatar">TR</button>
-        </div>
-      </header>
+      <SiteHeader active="today" />
 
       <section className="hero" id="today">
         <div>
@@ -38,7 +31,7 @@ export function TodayView({ data, apiConnected }: { data: TodayData; apiConnecte
           <span className={`connection ${apiConnected ? "connected" : "fallback"}`}>
             <CircleDot size={14} /> {apiConnected ? "API connected" : "Local fallback"}
           </span>
-          <span><Clock3 size={14} /> Updated {generatedAt} PHT</span>
+          <span><Clock3 size={14} /> Updated {formatPht(data.generated_at)}</span>
         </div>
       </section>
 
@@ -47,7 +40,7 @@ export function TodayView({ data, apiConnected }: { data: TodayData; apiConnecte
           <DatabaseZap size={19} />
           <div>
             <strong>Demo evidence is active</strong>
-            <span>No live source is enabled yet. These recommendations are clearly seeded and must not be posted as current claims.</span>
+            <span>No live source has run yet. These recommendations are clearly seeded and must not be posted as current claims.</span>
           </div>
         </aside>
       )}
@@ -57,7 +50,7 @@ export function TodayView({ data, apiConnected }: { data: TodayData; apiConnecte
           <AlertTriangle size={19} />
           <div>
             <strong>Some sources are stale or failing</strong>
-            <span>{data.sources.filter((source) => source.state !== "healthy" && source.state !== "disabled").map(describeSource).join(" · ")}. Treat rankings as possibly out of date.</span>
+            <span>{unhealthy.map(describeSource).join(" · ")}. Treat rankings as possibly out of date.</span>
           </div>
         </aside>
       )}
@@ -88,16 +81,16 @@ export function TodayView({ data, apiConnected }: { data: TodayData; apiConnecte
         </div>
       </section>
 
-      <section className="opportunities-section">
+      <section className="opportunities-section" id="queue">
         <div className="section-heading opportunity-heading">
           <div><p className="eyebrow">Decision queue</p><h2>Top opportunities now</h2></div>
-          <button className="filter-button"><SlidersHorizontal size={15} /> All opportunities <ChevronDown size={14} /></button>
         </div>
+        <TodayFilterBar active={filters} locations={data.locations} />
         <div className="opportunities-grid">
           {data.opportunities.map((opportunity) => <OpportunityCard key={opportunity.id} opportunity={opportunity} />)}
           <div className="next-slot">
             <span>Next qualified opportunity</span>
-            <strong>Waiting for evidence</strong>
+            <strong>{data.opportunities.length ? "Waiting for evidence" : "Nothing qualifies right now"}</strong>
             <p>Tr3ndly will add a recommendation only when it clears eligibility and quality gates.</p>
           </div>
         </div>
@@ -113,17 +106,3 @@ export function TodayView({ data, apiConnected }: { data: TodayData; apiConnecte
     </main>
   );
 }
-
-function describeSource(source: SourceStatus): string {
-  const label = source.state.replaceAll("_", " ");
-  if (!source.last_success_at) return `${source.display_name}: ${label}`;
-  const updated = new Intl.DateTimeFormat("en-PH", {
-    timeZone: "Asia/Manila",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(source.last_success_at));
-  return `${source.display_name}: ${label}, last success ${updated} PHT`;
-}
-

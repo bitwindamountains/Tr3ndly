@@ -34,6 +34,7 @@ def test_live_opportunity_detail_carries_traceable_evidence(live_client: TestCli
     detail = live_client.get(f"/opportunities/{first['id']}").json()
 
     assert detail["status"] == "eligible"
+    assert detail["decidable"] is True
     assert detail["score"]["version"] == "discovery-v1"
     assert detail["score"]["timely_score"] >= 65
     assert detail["evidence"][0]["source_name"] == "Open-Meteo forecast"

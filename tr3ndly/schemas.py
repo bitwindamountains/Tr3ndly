@@ -76,6 +76,8 @@ class DecisionResponse(BaseModel):
 
 class OpportunityDetail(OpportunitySummary):
     status: str
+    # Whether a new operator decision would be accepted right now.
+    decidable: bool
     decisions: list[DecisionResponse]
 
 
