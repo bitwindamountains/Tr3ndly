@@ -1,15 +1,23 @@
 # PROGRESS
 
-## Current status (2026-10-02)
+## Current status (2026-10-08)
 
-The automated evidence-to-opportunity loop works end to end against live Open-Meteo data. This is Phase C of the master plan, implementation tasks 4–6 and 9, at version 0.2.0. All checks pass:
-- pytest (43 tests);
+The full operator loop now runs in the app, which is Release 1 of the plan (implementation tasks 11–14):
+- signal and opportunity: weather plus a Philippine commerce calendar;
+- listing match and economics;
+- brief, copy variants, policy checks, approval and export;
+- results import and the assisted-versus-baseline overview.
+
+All checks pass:
+- pytest: 87 tests on SQLite and on PostgreSQL 18 (embedded);
 - ruff check and ruff format;
-- web typecheck, lint, test and production build.
+- web lint, typecheck, test (8) and production build.
 
-**Action needed:** the local `tr3ndly.db` is still at migration 0002. Run `.venv\Scripts\python.exe -m alembic upgrade head` before starting the API or worker.
+The whole flow was also verified in a browser on a scratch database with live Open-Meteo data.
 
-A pre-refactor backup was taken because this folder is not a git repository. It is the session-scoped scratchpad file `affiliate-backup-before-refactor.tgz`. Consider running `git init` and making a baseline commit.
+Nothing is posted automatically. The operator confirms the listing, approves the copy, and posts. That is required by AGENTS.md and the plan.
+
+**Action needed:** run `.venv\Scripts\python.exe -m pip install -e ".[dev]"` (adds `anthropic`) and `.venv\Scripts\python.exe -m alembic upgrade head` (migration 0004) before starting the API or worker.
 
 ## Done (2026-10-02)
 
@@ -85,16 +93,77 @@ A pre-refactor backup was taken because this folder is not a git repository. It 
 - **PostgreSQL:** the full Python suite, migrations included, also passes on PostgreSQL 18. It was run locally with the embedded binaries. API test fixtures use `NullPool`, because asyncpg connections can't cross event loops.
 - **CI:** added a GitHub Actions workflow running the Python matrix (SQLite and Postgres 17) and the web checks. It has not run on GitHub yet, because the repository has no remote.
 
+## Round 3 (2026-10-08)
+- **The threshold gate now filters.** Freshness and geography were both fixed at 100, so every timely score was at least 66, against a gate of 65.
+  - Freshness is now `100 - 20 × lead_days`, so today scores 100 and 2 days out scores 60.
+  - The default `MIN_TIMELY_SCORE` is now 70. Score version: `discovery-v2`.
+  - Effect on the 3 cities: marginal rain 2 days out outside Manila is dropped. Forecast-only danger heat (42°C+) and hazard rain (50 mm+) also drop first, because of the medium-sensitivity penalty: 2 days out in Manila, and same-day or later in Cebu and Davao. This fits the plan's rule that high-impact alerts need official confirmation.
+  - Tune with real data in Release 0.
+- **Retirement no longer expires operator decisions.** When the forecast drops an event, only its `eligible` opportunities expire. Accepted, deferred, rejected and matched ones keep their own window.
+- **A returning event reuses decided opportunities.** If the event comes back within that window, those opportunities are re-attached to the new event cluster instead of being duplicated as new eligible cards, so a rejection stays rejected.
+- Tests: 54 Python (2 new; both fail on the old pipeline).
+
+## Round 4 (2026-10-08): automating the product-to-post loop
+- **Commerce calendar source** (`ph-calendar`, `calendar-rules-v1`):
+  - it is computed, with nothing fetched;
+  - it covers double-day sales (9.9 to 12.12 count as major), paydays on the 15th and 30th (or the month's last day), Valentine's, Mother's and Father's Day, back to school (June; DepEd caveat), and the Christmas gift season;
+  - each occasion surfaces a fixed number of days ahead.
+  - New needs: `sale_day_upgrades`, `gift_giving` and `school_supplies`, with 9 concepts (`needs-catalog-v2`).
+  - Freshness now comes from the detector (`DetectedEvent.freshness`, moved to `intelligence/events.py`). Weather is unchanged at `100 - 20 × lead_days`. Calendar freshness only falls after 2 days out.
+- **Listing match** (`opportunities/listings.py`, plan section 12):
+  - Add a listing (marketplace, URLs, price, commission, seller, rating, reviews, sold, stock, verified facts, image provenance) once the opportunity is accepted.
+  - Confirm it as live and affiliate-eligible. Out-of-stock and zero-commission listings are refused.
+  - Confirming marks the previous confirmed listing `stale` and the opportunity `matched`.
+  - Failed searches are logged with a reason.
+- **Economics** (`scoring.py`):
+  - `listing_economics` weighs commission amount (log scale, 50 at ₱20 per sale), price band, seller type, rating weighted by review count, and units sold.
+  - `publish_priority` follows plan 9.5. Version `publish-v1`; the pipeline keeps it on reruns.
+  - Today ranks by publish priority when present.
+- **Studio** (`creative/`):
+  - The brief comes from the listing and the concept: angle, audience, verified facts, claims to avoid, and the disclosure.
+  - Generation produces 3 variants (problem, benefit and curiosity hooks): Claude `claude-opus-5-5` when `ANTHROPIC_API_KEY` is set, with structured output, effort `medium`, and server-side refusal fallbacks (`fallbacks="default"`); deterministic templates otherwise.
+  - `policy.py` blocks prices and discounts, superlatives, urgency, health, safety and guarantee claims, fear framing, durability words, and numbers not in the verified facts.
+  - Edits create a new variant. Approval is refused while blocking issues remain.
+- **Export:**
+  - It needs an approved variant and a listing re-confirmed within 72h (`LISTING_RECHECK_HOURS`).
+  - It assigns a `t3xxxxxxxx` tracking code to use as the affiliate sub ID.
+  - It always appends `AFFILIATE_DISCLOSURE`.
+  - It returns the post text, links, and a checklist (sub ID, platform disclosure toggle, real product images, no price).
+- **Results** (`results.py`):
+  - CSV import with column aliases (`sub_id`, `commission`, …), ₱ and comma parsing, and ISO or MM/DD/YYYY dates.
+  - It is append-only; unchanged re-imports are skipped.
+  - Unknown codes count as baseline posts.
+  - The overview shows assisted versus baseline posts by event type, category and hook, with sample-size warnings.
+- **API:**
+  - `POST /opportunities/{id}/product-match`, `POST /product-matches/{id}/confirm`, `POST /opportunities/{id}/search-failures`;
+  - `GET /product-matches/{id}/studio`, `POST /product-matches/{id}/creative-brief`, `POST /creative-briefs/{id}/generate`;
+  - `POST /creatives/{id}/review`, `POST|GET /creatives/{id}/export`;
+  - `POST /results/import`, `GET /results/overview`.
+  - Domain errors map to 404, 409, 422 and 502.
+- **Web:** the listing section on the opportunity page, `/studio/[matchId]`, `/exports/[variantId]`, `/results`, and a Results nav link. Vitest resolves the `@/` alias.
+- **Migration** `20261008_0004` is reversible: product_matches, listing_search_failures, creative_briefs, creative_variants, creative_reviews, metric_observations, and the score_snapshots economics and publish columns.
+- **Copy eval:** `scripts/eval_copy.py` over `tests/fixtures/copy_briefs.json`. The template scores 15/15. **Claude has not been evaluated yet**: no API key was available in this session. Run the eval with a key before relying on AI copy, and record the result here.
+- **Dependency:** `anthropic>=1.12,<2`, documented in pyproject.
+- **Bugs found while testing in the browser:**
+  - the "No affiliate listing has been matched yet" uncertainty stayed after a match;
+  - the template wrote "a air fryer".
+
 ## Next
-- **Not fixed: open review items.**
+- **Before relying on AI copy:**
+  - set `ANTHROPIC_API_KEY`;
+  - run `scripts/eval_copy.py` and review the variants it prints;
+  - record the pass rate here.
+- **Affiliate APIs:** which programs (Shopee, Lazada, TikTok Shop, Involve Asia) and is API access approved? With access, add a listing adapter that pre-fills candidates from search phrases, and a report adapter that replaces the CSV import. Do not scrape.
+- **Release 0:** run the loop with real posts for 2+ weeks (30+ posts if feasible), including baseline posts, then tune thresholds, catalog priors and economics weights from the results.
+- **Creative Release 2** (after the Release 1 gate): templates and rendering that use the listing's real images, with fidelity checks. Then AI image or video editing (for example Veo through the Gemini API) only around the real product.
+- **Not built:**
+  - idempotency keys on generate, import and export (the UI disables buttons while pending);
+  - a post URL or posted-at record;
+  - model-run cost dashboard on `/operations` (token usage is stored on each variant's `generation`);
+  - experiment assignment beyond a free-text label.
+- **Still open from earlier reviews:**
   - Sign-in has no rate limiting. Use a long `OPERATOR_PASSWORD`, and add throttling before any public exposure.
-  - `next.config.ts` uses `output: "standalone"`, so production should run `node .next/standalone/server.js` rather than `next start`.
+  - `next.config.ts` uses `output: "standalone"`, so production should run `node .next/standalone/server.js`.
   - A missing opportunity returns HTTP 200 with the not-found UI, because `loading.tsx` streams before `notFound()`.
   - Push to GitHub to activate CI. There is no remote yet.
-- **Product, per plan:**
-  - Add a `/operations` page using the new endpoints.
-  - Release 0 validation with a real operator, to tune thresholds and catalog priors.
-  - Build a labelled eval set before any AI classifier.
-  - Add a news source behind `DETECTORS`.
-  - Product match and failed-search logging (task 11), then listing economics (task 12).
-  - A manual import path for concierge-collected signals.
+- **Product, per plan:** a labelled eval set before any AI classifier; a news source behind `DETECTORS`; a manual import path for concierge-collected signals.

@@ -7,6 +7,7 @@ from tr3ndly.db.models import (
     OpportunityStatus,
     ScoreSnapshot,
 )
+from tr3ndly.opportunities.scores import NO_LISTING_UNCERTAINTY
 
 DEMO_OPPORTUNITY_ID = "demo_opp_fan"
 
@@ -29,7 +30,7 @@ def build_demo_opportunity(now: datetime | None = None) -> Opportunity:
             "handheld fan long battery",
         ],
         uncertainties=[
-            "No affiliate listing has been matched yet.",
+            NO_LISTING_UNCERTAINTY,
             "This is seeded demo evidence and not a live weather recommendation.",
         ],
         is_demo=True,

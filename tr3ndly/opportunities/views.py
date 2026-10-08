@@ -1,11 +1,34 @@
 """Mapping from ORM rows to API read models."""
 
-from tr3ndly.db.models import DecisionEvent, Opportunity, ScoreSnapshot
-from tr3ndly.schemas import DecisionResponse, Evidence, OpportunitySummary, ScoreBreakdown
+from tr3ndly.db.models import (
+    DecisionEvent,
+    ListingSearchFailure,
+    Opportunity,
+    ProductMatch,
+    ScoreSnapshot,
+)
+from tr3ndly.intelligence.scoring import expected_commission_centavos, listing_economics
+from tr3ndly.opportunities.scores import listing_facts
+from tr3ndly.schemas import (
+    DecisionResponse,
+    Evidence,
+    OpportunitySummary,
+    ProductMatchView,
+    ScoreBreakdown,
+    SearchFailureView,
+)
 
 
 def latest_score(opportunity: Opportunity) -> ScoreSnapshot:
     return max(opportunity.scores, key=lambda item: (item.created_at, item.id))
+
+
+def rank_value(opportunity: Opportunity) -> int:
+    """Publish priority once a listing is confirmed, discovery priority before."""
+    score = latest_score(opportunity)
+    if score.publish_priority is not None:
+        return score.publish_priority
+    return score.discovery_priority
 
 
 def to_summary(opportunity: Opportunity) -> OpportunitySummary:
@@ -42,11 +65,59 @@ def to_summary(opportunity: Opportunity) -> OpportunitySummary:
             discovery_priority=score.discovery_priority,
             timely_score=score.timely_score,
             trend_score=score.trend_score,
+            listing_economics=score.listing_economics,
+            publish_priority=score.publish_priority,
             version=score.version,
         ),
         search_queries=opportunity.search_queries,
         uncertainties=opportunity.uncertainties,
         evidence=list(newest.values()),
+    )
+
+
+def to_match(match: ProductMatch) -> ProductMatchView:
+    economics, components = listing_economics(listing_facts(match))
+    return ProductMatchView(
+        id=match.id,
+        opportunity_id=match.opportunity_id,
+        marketplace=match.marketplace,
+        product_url=match.product_url,
+        affiliate_url=match.affiliate_url,
+        listing_title=match.listing_title,
+        seller_name=match.seller_name,
+        seller_type=match.seller_type,
+        price_php=match.price_centavos / 100,
+        commission_rate_pct=match.commission_rate_bps / 100,
+        expected_commission_php=expected_commission_centavos(
+            match.price_centavos, match.commission_rate_bps
+        )
+        / 100,
+        rating=match.rating / 10 if match.rating is not None else None,
+        review_count=match.review_count,
+        sold_count=match.sold_count,
+        in_stock=match.in_stock,
+        shipping_note=match.shipping_note,
+        verified_facts=match.verified_facts,
+        image_url=match.image_url,
+        image_usage_note=match.image_usage_note,
+        notes=match.notes,
+        status=match.status.value,
+        listing_economics=economics,
+        economics_components=components,
+        eligibility_checked_at=match.eligibility_checked_at,
+        confirmed_at=match.confirmed_at,
+        created_at=match.created_at,
+    )
+
+
+def to_search_failure(failure: ListingSearchFailure) -> SearchFailureView:
+    return SearchFailureView(
+        id=failure.id,
+        marketplace=failure.marketplace,
+        query=failure.query,
+        reason=failure.reason,
+        note=failure.note,
+        created_at=failure.created_at,
     )
 
 

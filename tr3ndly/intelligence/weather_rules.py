@@ -12,6 +12,7 @@ from typing import Any
 
 from tr3ndly.db.models import Sensitivity
 from tr3ndly.geo import LOCATIONS_BY_NAME, MANILA
+from tr3ndly.intelligence.events import DetectedEvent
 from tr3ndly.sources.base import NormalizedSignal
 
 RULE_VERSION = "weather-rules-v1"
@@ -21,26 +22,8 @@ HEAT_DANGER_FEELS_LIKE_C = 42.0
 RAIN_MM = 20.0
 RAIN_MIN_PROBABILITY = 60.0
 RAIN_HAZARD_MM = 50.0
-
-
-@dataclass(frozen=True)
-class DetectedEvent:
-    dedupe_key: str
-    event_type: str
-    location: str
-    title: str
-    summary: str
-    consumer_needs: tuple[str, ...]
-    sensitivity: Sensitivity
-    starts_at: datetime
-    expires_at: datetime
-    need_strength: int
-    actionability: int
-    reach: int
-    lead_days: int
-    signal_external_ids: tuple[str, ...]
-    uncertainties: tuple[str, ...]
-    rule_version: str = RULE_VERSION
+# Each forecast day out is less reliable and less actionable than today.
+FRESHNESS_LOSS_PER_LEAD_DAY = 20
 
 
 @dataclass(frozen=True)
@@ -150,6 +133,7 @@ def _event(
     dates = sorted(_day(s.facts) for s in days)
     place = LOCATIONS_BY_NAME.get(location)
     slug = place.slug if place else location.lower().replace(" ", "-")
+    lead_days = (dates[0] - today).days
     return DetectedEvent(
         dedupe_key=f"weather:{rule.event_type}:{slug}",
         event_type=rule.event_type,
@@ -161,12 +145,14 @@ def _event(
         starts_at=datetime.combine(dates[0], time.min, MANILA),
         # The window closes at the end of the last qualifying day, Manila time.
         expires_at=datetime.combine(dates[-1] + timedelta(days=1), time.min, MANILA),
+        freshness=max(0, 100 - FRESHNESS_LOSS_PER_LEAD_DAY * lead_days),
         need_strength=need_strength,
         actionability=rule.actionability,
         reach=place.reach if place else 50,
-        lead_days=(dates[0] - today).days,
+        lead_days=lead_days,
         signal_external_ids=tuple(s.external_id for s in days),
         uncertainties=tuple(uncertainties),
+        rule_version=RULE_VERSION,
     )
 
 

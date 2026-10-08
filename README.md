@@ -1,6 +1,19 @@
 # Tr3ndly
 
-Tr3ndly is a Philippines-focused affiliate opportunity intelligence system. This repository contains the foundation and the first automated evidence-to-opportunity slice. A worker pulls Open-Meteo forecasts for Metro Manila, Cebu City and Davao City and detects heat and heavy-rain events. It turns them into consumer needs and generic product concepts, scores them, and fills the Today queue for operator review.
+Tr3ndly is a Philippines-focused affiliate opportunity intelligence system. A worker pulls two sources:
+
+- Open-Meteo forecasts for Metro Manila, Cebu City and Davao City, which produce heat and heavy-rain events;
+- a computed Philippine commerce calendar of double-day sales, paydays, and the gifting and back-to-school seasons.
+
+It turns these events into consumer needs and generic product concepts, scores them, and fills the Today queue for operator review.
+
+## Operator workflow
+
+1. **Today:** accept the opportunities worth a marketplace search.
+2. **Opportunity page:** search with the suggested phrases, add the real listing (price, commission, rating, verified facts), then confirm it is live and affiliate-eligible. The score switches to publish priority, which includes the listing's economics. Log any searches that found nothing usable.
+3. **Studio:** create a brief and generate three copy variants. Copy comes from Claude when `ANTHROPIC_API_KEY` is set and from templates otherwise. Every variant is checked for unsupported claims (prices, superlatives, urgency, health or safety, fear framing, numbers not in the verified facts). Approve or edit; an edit becomes a new variant.
+4. **Export:** gives you the post text with the disclosure, the affiliate link, a checklist, and a tracking code. Use the code as the sub ID on your affiliate link, then post manually.
+5. **Results:** import your affiliate report as CSV. Rows match exports by tracking code; other codes count as baseline posts.
 
 ## Local setup
 
@@ -34,7 +47,7 @@ npm.cmd install
 npm.cmd run dev:web
 ```
 
-Open http://localhost:3000 for Today and http://localhost:3000/operations for source health and run history. The API runs at http://localhost:8000 and exposes OpenAPI documentation at http://localhost:8000/docs.
+Open http://localhost:3000 for Today, http://localhost:3000/results for results, and http://localhost:3000/operations for source health and run history. The API runs at http://localhost:8000 and exposes OpenAPI documentation at http://localhost:8000/docs.
 
 ### Security
 
@@ -58,6 +71,7 @@ npm.cmd run lint:web
 npm.cmd run typecheck:web
 npm.cmd run test:web
 npm.cmd run build:web
+.venv\Scripts\python.exe scripts\eval_copy.py   # copy policy pass rate; calls Claude when a key is set
 ```
 
 ## Configuration

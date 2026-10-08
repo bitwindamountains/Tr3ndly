@@ -8,7 +8,8 @@ def test_today_in_live_mode_hides_demo_cards_and_shows_signals(live_client: Test
 
     assert payload["mode"] == "live"
     assert payload["source_health"] == "healthy"
-    assert [source["state"] for source in payload["sources"]] == ["healthy"]
+    states = {source["slug"]: source["state"] for source in payload["sources"]}
+    assert states == {"open-meteo": "healthy", "ph-calendar": "disabled"}
     assert all(item["id"] != "demo_opp_fan" for item in payload["opportunities"])
 
     headlines = [signal["headline"] for signal in payload["signals"]]
@@ -35,8 +36,8 @@ def test_live_opportunity_detail_carries_traceable_evidence(live_client: TestCli
 
     assert detail["status"] == "eligible"
     assert detail["decidable"] is True
-    assert detail["score"]["version"] == "discovery-v1"
-    assert detail["score"]["timely_score"] >= 65
+    assert detail["score"]["version"] == "discovery-v2"
+    assert detail["score"]["timely_score"] >= 70
     assert detail["evidence"][0]["source_name"] == "Open-Meteo forecast"
     assert detail["evidence"][0]["source_url"] == "https://open-meteo.com/"
 

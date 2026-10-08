@@ -7,6 +7,7 @@ import { Brand } from "./brand";
 
 const links = [
   { href: "/", label: "Today", key: "today" },
+  { href: "/results", label: "Results", key: "results" },
   { href: "/operations", label: "Operations", key: "operations" },
 ] as const;
 

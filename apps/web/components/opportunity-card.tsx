@@ -14,7 +14,9 @@ export function OpportunityCard({ opportunity }: { opportunity: Opportunity }) {
         <span className={`reason-pill reason-${opportunity.reason_type}`}>
           <Sparkles size={13} /> {opportunity.reason_type}
         </span>
-        <span className="score"><strong>{opportunity.score.discovery_priority}</strong>/100</span>
+        <span className="score" title={opportunity.score.publish_priority != null ? "Publish priority (listing matched)" : "Discovery priority"}>
+          <strong>{opportunity.score.publish_priority ?? opportunity.score.discovery_priority}</strong>/100
+        </span>
       </div>
 
       <div>

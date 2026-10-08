@@ -11,6 +11,7 @@ from tr3ndly.config import Settings
 from tr3ndly.db.models import (
     EventCluster,
     EventStatus,
+    ListingSearchFailure,
     Opportunity,
     OpportunityEvidence,
     OpportunityReason,
@@ -21,7 +22,14 @@ from tr3ndly.db.types import utcnow
 from tr3ndly.intelligence.catalog import NEED_LABELS
 from tr3ndly.operations import has_live_data, overall_health, source_statuses
 from tr3ndly.opportunities.decisions import is_decidable
-from tr3ndly.opportunities.views import latest_score, to_decision, to_summary
+from tr3ndly.opportunities.listings import is_matchable
+from tr3ndly.opportunities.views import (
+    rank_value,
+    to_decision,
+    to_match,
+    to_search_failure,
+    to_summary,
+)
 from tr3ndly.schemas import OpportunityDetail, TimelySignal, TodayResponse
 
 TODAY_LIMIT = 8
@@ -55,7 +63,7 @@ class OpportunityQueries:
             candidates = [item for item in candidates if item.location == location]
         if reason_type:
             candidates = [item for item in candidates if item.reason_type == reason_type]
-        candidates.sort(key=lambda item: latest_score(item).discovery_priority, reverse=True)
+        candidates.sort(key=rank_value, reverse=True)
 
         return TodayResponse(
             generated_at=now,
@@ -78,16 +86,28 @@ class OpportunityQueries:
                 selectinload(Opportunity.evidence).selectinload(OpportunityEvidence.raw_signal),
                 selectinload(Opportunity.scores),
                 selectinload(Opportunity.decisions),
+                selectinload(Opportunity.product_matches),
             )
         )
         if opportunity is None or not opportunity.scores:
             return None
         decisions = sorted(opportunity.decisions, key=lambda item: item.created_at, reverse=True)
+        matches = sorted(
+            opportunity.product_matches, key=lambda item: item.created_at, reverse=True
+        )
+        failures = await self.session.scalars(
+            select(ListingSearchFailure)
+            .where(ListingSearchFailure.opportunity_id == opportunity.id)
+            .order_by(ListingSearchFailure.created_at.desc())
+        )
         return OpportunityDetail(
             **to_summary(opportunity).model_dump(),
             status=opportunity.status.value,
             decidable=is_decidable(opportunity, now),
+            matchable=is_matchable(opportunity, now),
             decisions=[to_decision(item) for item in decisions],
+            product_matches=[to_match(item) for item in matches],
+            search_failures=[to_search_failure(item) for item in failures],
         )
 
     def _open_queue(self, now: datetime, live: bool) -> Select[tuple[Opportunity]]:

@@ -11,6 +11,7 @@ from sqlalchemy.pool import NullPool
 from apps.api.app.database import get_session
 from apps.api.app.main import app
 from tests.conftest import database_url, load_forecast, mock_client, reset_schema
+from tr3ndly.config import Settings, get_settings
 from tr3ndly.db.session import build_engine
 from tr3ndly.db.types import utcnow
 from tr3ndly.geo import MANILA
@@ -35,7 +36,7 @@ async def seed_live(sessions: async_sessionmaker[AsyncSession]) -> None:
     for location in forecast:
         location["daily"]["time"] = [str(today + timedelta(days=day)) for day in range(3)]
     async with mock_client(forecast) as client:
-        await run_source(sessions, OpenMeteoAdapter(), client, min_timely_score=65)
+        await run_source(sessions, OpenMeteoAdapter(), client, min_timely_score=70)
 
 
 def make_client(tmp_path: Path, prepare: Prepare) -> Iterator[TestClient]:
@@ -53,6 +54,8 @@ def make_client(tmp_path: Path, prepare: Prepare) -> Iterator[TestClient]:
 
     asyncio.run(prepare_database())
     app.dependency_overrides[get_session] = override_session
+    # Calendar events depend on today's date, so API fixtures use the weather source only.
+    app.dependency_overrides[get_settings] = lambda: Settings(enabled_sources=["open-meteo"])
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

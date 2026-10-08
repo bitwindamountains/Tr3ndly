@@ -4,7 +4,8 @@ fetch → normalize → exact dedupe → detect events → eligibility gate → 
 
 Every run is recorded in source_runs with its stats or error. The pipeline never changes an
 operator decision; it only creates eligible opportunities, adds evidence and score snapshots,
-and retires events the source no longer reports.
+and retires events the source no longer reports. Retiring an event expires only its undecided
+opportunities; decided ones run to their own window and rejoin the event if it returns.
 """
 
 from dataclasses import asdict, dataclass
@@ -25,7 +26,6 @@ from tr3ndly.db.models import (
     OpportunityReason,
     OpportunityStatus,
     RawSignal,
-    ScoreSnapshot,
     Sensitivity,
     SourceConfig,
     SourceRun,
@@ -34,11 +34,12 @@ from tr3ndly.db.models import (
 from tr3ndly.db.types import utcnow
 from tr3ndly.intelligence import DETECTORS, DetectedEvent
 from tr3ndly.intelligence.catalog import CATALOG_VERSION, NEED_LABELS, ProductConcept, concepts_for
-from tr3ndly.intelligence.scoring import (
-    SENSITIVITY_PENALTY,
-    OpportunityScore,
-    TimelyDimensions,
-    score_concept,
+from tr3ndly.intelligence.scoring import SENSITIVITY_PENALTY, TimelyDimensions, score_concept
+from tr3ndly.opportunities.scores import (
+    NO_LISTING_UNCERTAINTY,
+    confirmed_match,
+    listing_facts,
+    record_score,
 )
 from tr3ndly.sources.base import NormalizedSignal, SourceAdapter, SourceDefinition
 
@@ -46,6 +47,13 @@ logger = structlog.get_logger()
 
 # Statuses the pipeline may move to EXPIRED. Rejected and matched opportunities are left alone.
 OPEN_STATUSES = (OpportunityStatus.ELIGIBLE, OpportunityStatus.DEFERRED, OpportunityStatus.ACCEPTED)
+# Statuses an operator has set. A returning event picks these up instead of duplicating them.
+DECIDED_STATUSES = (
+    OpportunityStatus.ACCEPTED,
+    OpportunityStatus.DEFERRED,
+    OpportunityStatus.REJECTED,
+    OpportunityStatus.MATCHED,
+)
 # Philippine locations only, for now.
 GEOGRAPHY_SCORE = 100
 
@@ -147,8 +155,9 @@ async def expire_stale(session: AsyncSession, now: datetime | None = None) -> tu
 
 def timely_dimensions(event: DetectedEvent, definition: SourceDefinition) -> TimelyDimensions:
     return TimelyDimensions(
-        # Scored right after fetching. Stale data is surfaced through source health instead.
-        freshness=100,
+        # Scored right after fetching, so the detector rates freshness by how far ahead the
+        # event starts. Stale data is surfaced through source health instead.
+        freshness=event.freshness,
         geography=GEOGRAPHY_SCORE,
         reach=event.reach,
         need_strength=event.need_strength,
@@ -290,8 +299,12 @@ class _Ingestion:
                 Opportunity.event_cluster_id == cluster.id,
                 Opportunity.concept_key == concept.key,
             )
-            .options(selectinload(Opportunity.evidence), selectinload(Opportunity.scores))
+            .options(*_OPPORTUNITY_LOADS)
         )
+        if opportunity is None:
+            opportunity = await self._decided_on_earlier_event(cluster, concept)
+            if opportunity is not None:
+                opportunity.event_cluster_id = cluster.id
         if opportunity is None:
             opportunity = Opportunity(
                 event_cluster_id=cluster.id,
@@ -301,6 +314,7 @@ class _Ingestion:
                 is_demo=False,
                 evidence=[],
                 scores=[],
+                product_matches=[],
             )
             self.session.add(opportunity)
             self.stats.opportunities_created += 1
@@ -313,8 +327,9 @@ class _Ingestion:
         opportunity.why_now = f"{event.summary} This concept addresses {need}."
         opportunity.expires_at = event.expires_at
         opportunity.search_queries = list(concept.search_queries)
+        match = confirmed_match(opportunity)
         opportunity.uncertainties = [
-            "No affiliate listing has been matched yet.",
+            *([] if match else [NO_LISTING_UNCERTAINTY]),
             *event.uncertainties,
             "Avoid these claims unless the listing supports them: "
             + "; ".join(concept.claims_to_avoid)
@@ -334,16 +349,42 @@ class _Ingestion:
                     )
                 )
 
-        score = score_concept(dimensions, concept, event.lead_days, event.sensitivity)
-        latest = max(opportunity.scores, key=lambda item: item.created_at, default=None)
-        if latest is None or _score_key(latest) != _score_values(score):
-            opportunity.scores.append(_snapshot(score, dimensions, event))
-            if latest is not None:
-                self.stats.opportunities_rescored += 1
+        score = score_concept(
+            dimensions,
+            concept,
+            event.lead_days,
+            event.sensitivity,
+            listing_facts(match) if match else None,
+        )
+        had_score = bool(opportunity.scores)
+        if record_score(opportunity, score, _components(dimensions, event), match) and had_score:
+            self.stats.opportunities_rescored += 1
         await self.session.flush()
 
+    async def _decided_on_earlier_event(
+        self, cluster: EventCluster, concept: ProductConcept
+    ) -> Opportunity | None:
+        """An opportunity the operator decided on before this event was retired and came back."""
+        return await self.session.scalar(
+            select(Opportunity)
+            .join(EventCluster, Opportunity.event_cluster_id == EventCluster.id)
+            .where(
+                EventCluster.dedupe_key == cluster.dedupe_key,
+                EventCluster.status == EventStatus.EXPIRED,
+                Opportunity.concept_key == concept.key,
+                Opportunity.status.in_(DECIDED_STATUSES),
+                Opportunity.expires_at > self.now,
+            )
+            .order_by(Opportunity.expires_at.desc())
+            .limit(1)
+            .options(*_OPPORTUNITY_LOADS)
+        )
+
     async def _retire_missing_events(self, kept_keys: set[str]) -> None:
-        """The latest data is the truth: events it no longer supports end now."""
+        """The latest data is the truth: events it no longer supports end now.
+
+        Only undecided opportunities expire with them; decided ones keep their own window.
+        """
         statement = select(EventCluster).where(
             EventCluster.source_id == self.source_id, EventCluster.status == EventStatus.ACTIVE
         )
@@ -359,58 +400,28 @@ class _Ingestion:
                 update(Opportunity)
                 .where(
                     Opportunity.event_cluster_id.in_([cluster.id for cluster in stale]),
-                    Opportunity.status.in_(OPEN_STATUSES),
+                    Opportunity.status == OpportunityStatus.ELIGIBLE,
                 )
                 .values(status=OpportunityStatus.EXPIRED, expires_at=self.now)
             )
 
 
-def _snapshot(
-    score: OpportunityScore, dimensions: TimelyDimensions, event: DetectedEvent
-) -> ScoreSnapshot:
-    return ScoreSnapshot(
-        demand=score.demand,
-        execution=score.execution,
-        marketplace_fit_prior=score.marketplace_fit_prior,
-        uncertainty_penalty=score.uncertainty,
-        discovery_priority=score.discovery_priority,
-        timely_score=score.timely,
-        trend_score=score.trend,
-        components={
-            "timely": dimensions.as_dict(),
-            "lead_days": event.lead_days,
-            "sensitivity": event.sensitivity.value,
-            "rule_version": event.rule_version,
-            "catalog_version": CATALOG_VERSION,
-        },
-        version=score.version,
-    )
+# Every relationship the upsert reads or appends to.
+_OPPORTUNITY_LOADS = (
+    selectinload(Opportunity.evidence),
+    selectinload(Opportunity.scores),
+    selectinload(Opportunity.product_matches),
+)
 
 
-def _score_values(score: OpportunityScore) -> tuple[object, ...]:
-    return (
-        score.version,
-        score.demand,
-        score.execution,
-        score.marketplace_fit_prior,
-        score.uncertainty,
-        score.discovery_priority,
-        score.timely,
-        score.trend,
-    )
-
-
-def _score_key(snapshot: ScoreSnapshot) -> tuple[object, ...]:
-    return (
-        snapshot.version,
-        snapshot.demand,
-        snapshot.execution,
-        snapshot.marketplace_fit_prior,
-        snapshot.uncertainty_penalty,
-        snapshot.discovery_priority,
-        snapshot.timely_score,
-        snapshot.trend_score,
-    )
+def _components(dimensions: TimelyDimensions, event: DetectedEvent) -> dict[str, object]:
+    return {
+        "timely": dimensions.as_dict(),
+        "lead_days": event.lead_days,
+        "sensitivity": event.sensitivity.value,
+        "rule_version": event.rule_version,
+        "catalog_version": CATALOG_VERSION,
+    }
 
 
 async def _finish_run(

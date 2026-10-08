@@ -1,0 +1,47 @@
+[
+  {
+    "product_name": "Portable rechargeable fan",
+    "category": "Household convenience",
+    "platform": "tiktok",
+    "audience": "Commuters, students, and households",
+    "angle": "A practical portable rechargeable fan for the hot days ahead.",
+    "verified_facts": ["USB-C charging", "3 speed settings", "Foldable handle", "4000mAh battery"],
+    "forbidden_claims": ["prevents heat stroke", "battery life not stated on the listing"]
+  },
+  {
+    "product_name": "Compact windproof umbrella",
+    "category": "Fashion accessories",
+    "platform": "facebook",
+    "audience": "Commuters and students",
+    "angle": "A practical compact windproof umbrella for the rainy days ahead.",
+    "verified_facts": ["Automatic open and close", "Fits in a bag side pocket", "Windproof frame"],
+    "forbidden_claims": ["typhoon-proof", "unbreakable"]
+  },
+  {
+    "product_name": "Air fryer",
+    "category": "Kitchen appliances",
+    "platform": "instagram",
+    "audience": "Households and young professionals",
+    "angle": "A practical air fryer for the next sale day.",
+    "verified_facts": ["4.5L basket", "Digital touch controls", "Dishwasher-safe basket"],
+    "forbidden_claims": ["oil-free or healthier cooking", "capacity or wattage not on the listing"]
+  },
+  {
+    "product_name": "Scented candle gift set",
+    "category": "Home and living",
+    "platform": "tiktok",
+    "audience": "Gift buyers on a budget",
+    "angle": "A practical scented candle gift set for gift season.",
+    "verified_facts": ["Set of 4 candles", "Comes in a gift box", "Lavender, vanilla, citrus, and rose scents"],
+    "forbidden_claims": ["stress relief, sleep, or other health benefits"]
+  },
+  {
+    "product_name": "School backpack",
+    "category": "Bags",
+    "platform": "youtube_shorts",
+    "audience": "Parents and students",
+    "angle": "A practical school backpack for back to school.",
+    "verified_facts": ["Padded laptop sleeve up to 15.6 inches", "Water-resistant fabric", "Side bottle pockets"],
+    "forbidden_claims": ["waterproof unless the listing says so", "posture or spine benefits"]
+  }
+]

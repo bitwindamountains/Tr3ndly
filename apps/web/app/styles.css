@@ -149,6 +149,59 @@ button { cursor: pointer; }
 .login-error { color: #8a2f1d; font-size: 13px; margin: 0; }
 .loading-state { min-height: 70vh; display: grid; place-items: center; color: var(--muted); }
 
+/* Forms, listings, studio, results */
+.button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--ink); background: var(--ink); color: white; padding: 9px 13px; border-radius: 10px; font-size: 12px; font-weight: 700; text-decoration: none; }
+.button.secondary { background: transparent; color: var(--ink); border-color: var(--line); }
+.button:disabled { opacity: .55; cursor: not-allowed; }
+.button-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.action-button { display: inline-flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.inline-form { display: inline-flex; gap: 8px; }
+.stack-form { display: grid; gap: 12px; margin-top: 14px; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.form-grid .span-2 { grid-column: span 2; }
+.stack-form label { display: grid; gap: 5px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.stack-form label.checkbox { display: flex; align-items: center; gap: 8px; }
+.stack-form input:not([type=checkbox]), .stack-form select, .stack-form textarea { border: 1px solid var(--line); border-radius: 9px; padding: 9px 10px; font-family: inherit; font-size: 13px; line-height: 1.4; color: var(--ink); background: white; width: 100%; }
+.stack-form small { color: var(--muted); font-size: 11px; font-weight: 500; }
+.form-details { border-top: 1px solid #e7e8e1; margin-top: 16px; padding-top: 14px; }
+.form-details summary { cursor: pointer; font-size: 13px; font-weight: 700; }
+.form-success, .form-error { font-size: 12px; }
+.form-success { color: var(--green); }.form-error { color: #8a2f1d; }
+.form-success p, .form-error p { margin: 0; }
+.muted-note { color: var(--muted); font-size: 12px; }
+.match-row { border-top: 1px solid #e7e8e1; padding: 16px 0; }
+.match-row.match-stale { opacity: .6; }
+.match-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.match-head strong a { color: var(--ink); }
+.match-head small { display: block; color: var(--muted); margin-top: 4px; text-transform: capitalize; }
+.match-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 0 6px; font-size: 12px; }
+.match-facts dt { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+.match-facts dd { margin: 3px 0 0; font-weight: 700; }
+.state-confirmed, .state-approved, .state-exported { background: #e6f0eb; color: var(--green); }
+.state-candidate, .state-needs_review { background: #fff2df; color: #98633a; }
+.state-stale, .state-rejected { background: #fde9e4; color: #8a2f1d; }
+.variant-list { display: grid; gap: 12px; margin-top: 16px; }
+.variant-card { border: 1px solid var(--line); border-radius: 14px; padding: 16px; background: white; }
+.variant-card.variant-rejected { opacity: .6; }
+.variant-topline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.variant-topline small { color: var(--muted); margin-left: auto; }
+.variant-copy { margin-top: 12px; font-size: 13px; line-height: 1.6; white-space: pre-line; }
+.variant-copy p { margin: 8px 0 0; }
+.variant-cta { font-weight: 700; }.variant-tags { color: var(--green); }
+.issue-list { margin: 12px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.5; }
+.issue-list .blocking { color: #8a2f1d; }.issue-list .warning { color: #98633a; }
+.post-text { white-space: pre-wrap; background: #f1f3eb; border: 1px solid #e2e5dc; border-radius: 12px; padding: 16px; font: 500 13px/1.6 'Manrope Variable', sans-serif; margin: 0; }
+.link-list { padding-left: 18px; font-size: 13px; line-height: 2.2; }
+.link-list a { color: var(--ink); display: inline-flex; align-items: center; gap: 4px; }
+.checklist { padding-left: 18px; color: #d8e4df; font-size: 13px; line-height: 1.6; }
+.checklist li + li { margin-top: 8px; }
+.results-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; align-items: start; margin-bottom: 18px; }
+.demo-banner div span { display: block; }
+@media (max-width: 800px) {
+  .form-grid, .results-grid, .match-facts { grid-template-columns: 1fr; }
+  .form-grid .span-2 { grid-column: auto; }
+}
+
 @media (max-width: 800px) {
   .shell { padding-inline: 18px; }
   .topbar { grid-template-columns: 1fr auto; }.topbar nav { display: none; }

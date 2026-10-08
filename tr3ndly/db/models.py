@@ -1,12 +1,13 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
+    Date,
     Enum,
     ForeignKey,
     Index,
@@ -62,6 +63,25 @@ class OpportunityReason(enum.StrEnum):
 class EventStatus(enum.StrEnum):
     ACTIVE = "active"
     EXPIRED = "expired"
+
+
+class ProductMatchStatus(enum.StrEnum):
+    CANDIDATE = "candidate"
+    CONFIRMED = "confirmed"
+    # Replaced by a newer confirmed listing for the same opportunity.
+    STALE = "stale"
+
+
+class CreativeStatus(enum.StrEnum):
+    NEEDS_REVIEW = "needs_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPORTED = "exported"
+
+
+class ReviewDecision(enum.StrEnum):
+    APPROVED = "approved"
+    REJECTED = "rejected"
 
 
 class Sensitivity(enum.StrEnum):
@@ -219,6 +239,9 @@ class Opportunity(Base):
     decisions: Mapped[list["DecisionEvent"]] = relationship(
         back_populates="opportunity", cascade="all, delete-orphan"
     )
+    product_matches: Mapped[list["ProductMatch"]] = relationship(
+        back_populates="opportunity", cascade="all, delete-orphan"
+    )
 
 
 class OpportunityEvidence(Base):
@@ -248,6 +271,8 @@ class ScoreSnapshot(Base):
         CheckConstraint("discovery_priority BETWEEN 0 AND 100", name="priority_range"),
         CheckConstraint("timely_score BETWEEN 0 AND 100", name="timely_range"),
         CheckConstraint("trend_score BETWEEN 0 AND 100", name="trend_range"),
+        CheckConstraint("listing_economics BETWEEN 0 AND 100", name="economics_range"),
+        CheckConstraint("publish_priority BETWEEN 0 AND 100", name="publish_range"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -261,6 +286,9 @@ class ScoreSnapshot(Base):
     discovery_priority: Mapped[int] = mapped_column(Integer)
     timely_score: Mapped[int | None] = mapped_column(Integer)
     trend_score: Mapped[int | None] = mapped_column(Integer)
+    # Set once a listing is confirmed; publish_priority then ranks the opportunity.
+    listing_economics: Mapped[int | None] = mapped_column(Integer)
+    publish_priority: Mapped[int | None] = mapped_column(Integer)
     # Input dimensions, kept so the formula can be replayed on historical data.
     components: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     version: Mapped[str] = mapped_column(String(80))
@@ -283,3 +311,162 @@ class DecisionEvent(Base):
     created_at: Mapped[datetime] = created_at_column()
 
     opportunity: Mapped[Opportunity] = relationship(back_populates="decisions")
+
+
+class ProductMatch(Base):
+    """A real affiliate listing an operator found for an opportunity.
+
+    Money is stored as integer centavos and rates as basis points so values stay exact on every
+    database. Listing facts are not edited: a correction is a new candidate.
+    """
+
+    __tablename__ = "product_matches"
+    __table_args__ = (
+        CheckConstraint("price_centavos > 0", name="price_positive"),
+        CheckConstraint("commission_rate_bps BETWEEN 0 AND 10000", name="commission_range"),
+        CheckConstraint("rating BETWEEN 0 AND 50", name="rating_range"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    opportunity_id: Mapped[str] = mapped_column(
+        ForeignKey("opportunities.id", ondelete="CASCADE"), index=True
+    )
+    marketplace: Mapped[str] = mapped_column(String(40))
+    product_url: Mapped[str] = mapped_column(String(2048))
+    affiliate_url: Mapped[str] = mapped_column(String(2048))
+    listing_title: Mapped[str] = mapped_column(String(500))
+    seller_name: Mapped[str | None] = mapped_column(String(240))
+    seller_type: Mapped[str | None] = mapped_column(String(40))
+    price_centavos: Mapped[int] = mapped_column(Integer)
+    commission_rate_bps: Mapped[int] = mapped_column(Integer)
+    # Tenths of a star, 0-50, so 4.8 is stored as 48.
+    rating: Mapped[int | None] = mapped_column(Integer)
+    review_count: Mapped[int | None] = mapped_column(Integer)
+    sold_count: Mapped[int | None] = mapped_column(Integer)
+    in_stock: Mapped[bool] = mapped_column(Boolean)
+    shipping_note: Mapped[str | None] = mapped_column(Text)
+    verified_facts: Mapped[list[str]] = mapped_column(JSON, default=list)
+    image_url: Mapped[str | None] = mapped_column(String(2048))
+    image_usage_note: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[ProductMatchStatus] = mapped_column(
+        enum_column(ProductMatchStatus), default=ProductMatchStatus.CANDIDATE
+    )
+    # When the operator last confirmed the listing is live and affiliate-eligible.
+    eligibility_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = created_at_column()
+
+    opportunity: Mapped[Opportunity] = relationship(back_populates="product_matches")
+    briefs: Mapped[list["CreativeBrief"]] = relationship(back_populates="product_match")
+
+
+class ListingSearchFailure(Base):
+    """A marketplace search that found no usable listing. Feeds marketplace-fit priors."""
+
+    __tablename__ = "listing_search_failures"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    opportunity_id: Mapped[str] = mapped_column(
+        ForeignKey("opportunities.id", ondelete="CASCADE"), index=True
+    )
+    marketplace: Mapped[str] = mapped_column(String(40))
+    query: Mapped[str] = mapped_column(String(500))
+    reason: Mapped[str] = mapped_column(String(80))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = created_at_column()
+
+
+class CreativeBrief(Base):
+    """An immutable brief that every copy variant derives from."""
+
+    __tablename__ = "creative_briefs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    product_match_id: Mapped[str] = mapped_column(
+        ForeignKey("product_matches.id", ondelete="CASCADE"), index=True
+    )
+    platform: Mapped[str] = mapped_column(String(40))
+    audience: Mapped[str] = mapped_column(String(240))
+    angle: Mapped[str] = mapped_column(Text)
+    verified_facts: Mapped[list[str]] = mapped_column(JSON, default=list)
+    forbidden_claims: Mapped[list[str]] = mapped_column(JSON, default=list)
+    disclosure: Mapped[str] = mapped_column(Text)
+    hypothesis: Mapped[str | None] = mapped_column(Text)
+    experiment_label: Mapped[str | None] = mapped_column(String(120))
+    version: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = created_at_column()
+
+    product_match: Mapped[ProductMatch] = relationship(back_populates="briefs")
+    variants: Mapped[list["CreativeVariant"]] = relationship(
+        back_populates="brief", cascade="all, delete-orphan"
+    )
+
+
+class CreativeVariant(Base):
+    """One copy package. An operator edit creates a new variant whose parent is the edited one."""
+
+    __tablename__ = "creative_variants"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    brief_id: Mapped[str] = mapped_column(
+        ForeignKey("creative_briefs.id", ondelete="CASCADE"), index=True
+    )
+    parent_id: Mapped[str | None] = mapped_column(ForeignKey("creative_variants.id"))
+    hook_type: Mapped[str] = mapped_column(String(40))
+    hook: Mapped[str] = mapped_column(Text)
+    caption: Mapped[str] = mapped_column(Text)
+    cta: Mapped[str] = mapped_column(Text)
+    hashtags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    generator: Mapped[str] = mapped_column(String(120))
+    prompt_version: Mapped[str | None] = mapped_column(String(40))
+    # Model, request id, and token usage for AI-generated variants.
+    generation: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    policy_issues: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    status: Mapped[CreativeStatus] = mapped_column(
+        enum_column(CreativeStatus), default=CreativeStatus.NEEDS_REVIEW
+    )
+    # Goes into the affiliate link's sub ID so sales trace back to this variant.
+    tracking_code: Mapped[str | None] = mapped_column(String(40), unique=True)
+    exported_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = created_at_column()
+
+    brief: Mapped[CreativeBrief] = relationship(back_populates="variants")
+    reviews: Mapped[list["CreativeReview"]] = relationship(
+        back_populates="variant", cascade="all, delete-orphan"
+    )
+
+
+class CreativeReview(Base):
+    __tablename__ = "creative_reviews"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    variant_id: Mapped[str] = mapped_column(
+        ForeignKey("creative_variants.id", ondelete="CASCADE"), index=True
+    )
+    decision: Mapped[ReviewDecision] = mapped_column(enum_column(ReviewDecision))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = created_at_column()
+
+    variant: Mapped[CreativeVariant] = relationship(back_populates="reviews")
+
+
+class MetricObservation(Base):
+    """Imported results for one tracking code on one day. Append-only; the newest row wins."""
+
+    __tablename__ = "metric_observations"
+    __table_args__ = (Index("ix_metric_observations_code_day", "tracking_code", "observed_on"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tracking_code: Mapped[str] = mapped_column(String(80))
+    # Null when Tr3ndly did not issue the code: a baseline, unassisted post.
+    variant_id: Mapped[str | None] = mapped_column(ForeignKey("creative_variants.id"), index=True)
+    observed_on: Mapped[date] = mapped_column(Date)
+    views: Mapped[int | None] = mapped_column(Integer)
+    clicks: Mapped[int | None] = mapped_column(Integer)
+    orders: Mapped[int | None] = mapped_column(Integer)
+    gmv_centavos: Mapped[int | None] = mapped_column(Integer)
+    commission_centavos: Mapped[int | None] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(40))
+    import_batch: Mapped[str] = mapped_column(String(36))
+    created_at: Mapped[datetime] = created_at_column()

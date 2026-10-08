@@ -1,4 +1,5 @@
 from datetime import timedelta
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import func, select
@@ -17,7 +18,9 @@ from tr3ndly.db.models import (
     SourceRun,
     SourceRunStatus,
 )
+from tr3ndly.opportunities.listings import add_product_match, confirm_product_match
 from tr3ndly.pipeline import expire_stale, run_source
+from tr3ndly.schemas import ProductMatchCreate
 from tr3ndly.sources.open_meteo import OpenMeteoAdapter
 
 Sessions = async_sessionmaker[AsyncSession]
@@ -25,7 +28,7 @@ Sessions = async_sessionmaker[AsyncSession]
 
 async def run(sessions: Sessions, forecast: Any, now=FIXTURE_NOW, status_code: int = 200):
     async with mock_client(forecast, status_code) as client:
-        return await run_source(sessions, OpenMeteoAdapter(), client, min_timely_score=65, now=now)
+        return await run_source(sessions, OpenMeteoAdapter(), client, min_timely_score=70, now=now)
 
 
 async def count(sessions: Sessions, model: type) -> int:
@@ -57,7 +60,7 @@ async def test_first_run_creates_events_and_scored_opportunities(
             select(ScoreSnapshot).where(ScoreSnapshot.opportunity_id == fan.id)
         )
         assert snapshot is not None
-        assert snapshot.version == "discovery-v1"
+        assert snapshot.version == "discovery-v2"
         assert snapshot.timely_score is not None
         assert snapshot.components["rule_version"] == "weather-rules-v1"
 
@@ -93,7 +96,7 @@ async def test_revised_forecast_rescores_without_touching_decisions(
                 opportunity_id=fan.id,
                 decision=DecisionType.ACCEPTED,
                 reason_code="useful_opportunity",
-                score_version="discovery-v1",
+                score_version="discovery-v2",
             )
         )
         await session.commit()
@@ -185,3 +188,121 @@ async def test_expire_stale_closes_open_opportunities_only(
             select(Opportunity).where(Opportunity.concept_key == "cooling-towel")
         )
         assert towel is not None and towel.status == OpportunityStatus.REJECTED
+
+
+async def test_gate_drops_marginal_events_far_ahead_in_smaller_cities(
+    sessions: Sessions, forecast: list[dict[str, Any]]
+) -> None:
+    # Cebu: barely-qualifying rain two days out. Manila keeps its strong same-day heat.
+    forecast[1]["daily"]["precipitation_sum"] = [8.0, 5.0, 21.0]
+    result = await run(sessions, forecast)
+
+    assert result.stats.events_detected == 2
+    assert result.stats.events_below_threshold == 1
+    assert result.stats.events_created == 1
+    async with sessions() as session:
+        types = set(await session.scalars(select(EventCluster.event_type)))
+    assert types == {"HEAT"}
+
+
+async def test_retirement_keeps_decisions_and_a_returning_event_reuses_them(
+    sessions: Sessions, forecast: list[dict[str, Any]]
+) -> None:
+    await run(sessions, forecast)
+    async with sessions() as session:
+        decided: dict[str, str] = {}
+        for key, status in (
+            ("compact-umbrella", OpportunityStatus.ACCEPTED),
+            ("waterproof-shoe-covers", OpportunityStatus.REJECTED),
+        ):
+            opportunity = await session.scalar(
+                select(Opportunity).where(Opportunity.concept_key == key)
+            )
+            assert opportunity is not None
+            opportunity.status = status
+            decided[key] = opportunity.id
+        await session.commit()
+
+    rain = forecast[1]["daily"]["precipitation_sum"]
+    forecast[1]["daily"]["precipitation_sum"] = [2.0, 3.0, 4.0]
+    dropped = await run(sessions, forecast, now=FIXTURE_NOW + timedelta(hours=3))
+    assert dropped.stats.events_retired == 1
+    async with sessions() as session:
+        umbrella = await session.get(Opportunity, decided["compact-umbrella"])
+        covers = await session.get(Opportunity, decided["waterproof-shoe-covers"])
+        assert umbrella is not None and umbrella.status == OpportunityStatus.ACCEPTED
+        assert umbrella.expires_at > FIXTURE_NOW + timedelta(hours=3)
+        assert covers is not None and covers.status == OpportunityStatus.REJECTED
+        bag = await session.scalar(
+            select(Opportunity).where(Opportunity.concept_key == "waterproof-dry-bag")
+        )
+        assert bag is not None and bag.status == OpportunityStatus.EXPIRED
+
+    forecast[1]["daily"]["precipitation_sum"] = rain
+    returned = await run(sessions, forecast, now=FIXTURE_NOW + timedelta(hours=6))
+
+    assert returned.stats.events_created == 1
+    # Five rain concepts; the accepted and rejected ones are reused, not duplicated.
+    assert returned.stats.opportunities_created == 3
+    async with sessions() as session:
+        active = await session.scalar(
+            select(EventCluster).where(
+                EventCluster.event_type == "HEAVY_RAIN", EventCluster.status == EventStatus.ACTIVE
+            )
+        )
+        assert active is not None
+        for key, status in (
+            ("compact-umbrella", OpportunityStatus.ACCEPTED),
+            ("waterproof-shoe-covers", OpportunityStatus.REJECTED),
+        ):
+            rows = list(
+                await session.scalars(select(Opportunity).where(Opportunity.concept_key == key))
+            )
+            assert len(rows) == 1
+            assert rows[0].id == decided[key]
+            assert rows[0].status == status
+            assert rows[0].event_cluster_id == active.id
+
+
+async def test_a_matched_opportunity_keeps_its_publish_score_across_runs(
+    sessions: Sessions, forecast: list[dict[str, Any]]
+) -> None:
+    await run(sessions, forecast)
+    async with sessions() as session:
+        fan = await session.scalar(
+            select(Opportunity).where(Opportunity.concept_key == "portable-rechargeable-fan")
+        )
+        assert fan is not None
+        fan.status = OpportunityStatus.ACCEPTED
+        await session.commit()
+        match = await add_product_match(
+            session,
+            fan.id,
+            ProductMatchCreate(
+                marketplace="shopee",
+                product_url="https://shopee.ph/p/1",
+                affiliate_url="https://s.shopee.ph/x",
+                listing_title="Handheld fan",
+                price_php=Decimal("349"),
+                commission_rate_pct=Decimal("8"),
+                verified_facts=["USB-C charging"],
+            ),
+            now=FIXTURE_NOW,
+        )
+        await confirm_product_match(session, match.id, now=FIXTURE_NOW)
+        fan_id = fan.id
+
+    again = await run(sessions, forecast, now=FIXTURE_NOW + timedelta(hours=3))
+
+    assert again.stats.opportunities_rescored == 0
+    async with sessions() as session:
+        versions = list(
+            await session.scalars(
+                select(ScoreSnapshot.version)
+                .where(ScoreSnapshot.opportunity_id == fan_id)
+                .order_by(ScoreSnapshot.created_at)
+            )
+        )
+        fan = await session.get(Opportunity, fan_id)
+    assert versions == ["discovery-v2", "publish-v1"]
+    assert fan is not None and fan.status == OpportunityStatus.MATCHED

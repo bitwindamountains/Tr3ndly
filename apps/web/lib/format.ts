@@ -13,6 +13,16 @@ export function formatPht(iso: string): string {
   return `${pht.format(new Date(iso))} PHT`;
 }
 
+const peso = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
+
+export function formatPeso(amount: number): string {
+  return peso.format(amount);
+}
+
+export function formatPercent(ratio: number | null): string {
+  return ratio == null ? "—" : `${(ratio * 100).toFixed(1)}%`;
+}
+
 export function describeSource(source: SourceStatus): string {
   const label = source.state.replaceAll("_", " ");
   if (!source.last_success_at) return `${source.display_name}: ${label}`;
