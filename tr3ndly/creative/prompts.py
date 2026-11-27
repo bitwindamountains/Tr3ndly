@@ -5,7 +5,7 @@ Owner: Tr3ndly operator.
 Failure behaviour: refusals, truncation, and invalid output raise UpstreamError; nothing is
 stored, and the operator can retry or use the template copywriter.
 Evaluation: `scripts/eval_copy.py` runs the fixture briefs through the configured copywriter
-and reports the policy pass rate. Record results in PROGRESS.md before changing the version.
+and reports the policy pass rate. Record results in docs/dev-notes/PROGRESS.md before changing the version.
 
 Changelog:
 - copy-v1 (2026-10-08): first version.

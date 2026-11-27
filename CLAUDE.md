@@ -11,7 +11,7 @@ Tr3ndly is a Philippines-focused affiliate opportunity intelligence system. It i
 - **Web:** Next.js 16 in `apps/web`.
 - **Database:** SQLite by default; set `DATABASE_URL` for async PostgreSQL.
 
-The plans are [TR3NDLY_MASTER_BUILD_PLAN.md](TR3NDLY_MASTER_BUILD_PLAN.md) (newer, v2.0, wins on conflict) and [TR3NDLY_SYSTEM_ARCHITECTURE.md](TR3NDLY_SYSTEM_ARCHITECTURE.md).
+The plans are [docs/dev-notes/master-build-plan.md](docs/dev-notes/master-build-plan.md) (newer, v2.0, wins on conflict) and [docs/dev-notes/system-architecture.md](docs/dev-notes/system-architecture.md).
 
 ## Commands (Windows, from repo root)
 
@@ -84,8 +84,8 @@ Rules, the catalog, and the score each carry a version string. Bump it when beha
 **Philippine time.** `tr3ndly.geo.MANILA` is a fixed UTC+8 offset. The Philippines has no DST, and Windows Python has no tzdata.
 
 ## Session workflow
-- At the start of each session, read [PROGRESS.md](PROGRESS.md) for the current status and next steps.
-- After any major or relevant change, update PROGRESS.md with what was done and what's next. Major changes include a new feature, an architecture change, an important decision, a bug fix, or a new command.
+- At the start of each session, read [docs/dev-notes/PROGRESS.md](docs/dev-notes/PROGRESS.md) for the current status and next steps.
+- After any major or relevant change, update docs/dev-notes/PROGRESS.md with what was done and what's next. Major changes include a new feature, an architecture change, an important decision, a bug fix, or a new command.
 - If the change affects lasting project knowledge (structure, setup, commands, conventions), also update this file.
-- Keep this file concise and put task-specific detail in PROGRESS.md.
+- Keep this file concise and put task-specific detail in docs/dev-notes/PROGRESS.md.
 - Before the user runs /clear or /compact, make sure both files are up to date.

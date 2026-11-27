@@ -1,21 +1,60 @@
 # Tr3ndly
 
-Tr3ndly is a Philippines-focused affiliate opportunity intelligence system. A worker pulls two sources:
+[![CI](https://github.com/bitwindamountains/Tr3ndly/actions/workflows/ci.yml/badge.svg)](https://github.com/bitwindamountains/Tr3ndly/actions/workflows/ci.yml)
 
-- Open-Meteo forecasts for Metro Manila, Cebu City and Davao City, which produce heat and heavy-rain events;
-- a computed Philippine commerce calendar of double-day sales, paydays, and the gifting and back-to-school seasons.
+Turns weather and sale-day signals into affiliate product picks for the Philippines. A worker reads weather forecasts and a commerce calendar, turns them into consumer needs and product ideas, scores them, and queues them for an operator to review, write up and post.
 
-It turns these events into consumer needs and generic product concepts, scores them, and fills the Today queue for operator review.
+![Today: heat, rain and sale-day signals by city, with scored opportunities to review](docs/images/today.webp)
 
-## Operator workflow
+## How it works
 
-1. **Today:** accept the opportunities worth a marketplace search.
-2. **Opportunity page:** search with the suggested phrases, add the real listing (price, commission, rating, verified facts), then confirm it is live and affiliate-eligible. The score switches to publish priority, which includes the listing's economics. Log any searches that found nothing usable.
-3. **Studio:** create a brief and generate three copy variants. Copy comes from Claude when `ANTHROPIC_API_KEY` is set and from templates otherwise. Every variant is checked for unsupported claims (prices, superlatives, urgency, health or safety, fear framing, numbers not in the verified facts). Approve or edit; an edit becomes a new variant.
-4. **Export:** gives you the post text with the disclosure, the affiliate link, a checklist, and a tracking code. Use the code as the sub ID on your affiliate link, then post manually.
-5. **Results:** import your affiliate report as CSV. Rows match exports by tracking code; other codes count as baseline posts.
+1. **Signals:** Open-Meteo forecasts for Metro Manila, Cebu City and Davao City produce heat and heavy-rain events. A computed Philippine commerce calendar adds double-day sales, paydays, and the gifting and back-to-school seasons.
+2. **Opportunities:** each event becomes consumer needs and generic product concepts, scored and placed in the **Today** queue.
+3. **Operator review:** a person searches the marketplace, adds the real listing and its verified facts, and decides whether to publish.
+4. **Copy and export:** the Studio writes post copy that is checked for unsupported claims, then exports it with the affiliate disclosure and a tracking code.
+5. **Results:** importing the affiliate report shows how assisted posts did against the baseline.
 
-## Local setup
+## Walkthrough
+
+**1. Decide on an opportunity.** The evidence behind each idea, a score, and an accept, defer or reject decision kept in an audit trail. After the real listing is added and confirmed live, the score switches to publish priority, which includes the listing's price and commission.
+
+![Opportunity page with its evidence, score and decision](docs/images/opportunity.webp)
+
+**2. Write the post.** A brief built from verified listing facts, with the claims the copy may not make spelled out. Three copy variants come from Claude when `ANTHROPIC_API_KEY` is set, or from templates otherwise. Editing a variant saves it as a new one.
+
+![Studio: brief, policy rules and copy variants](docs/images/studio.webp)
+
+**3. Export it.** Post text with the affiliate disclosure, a tracking code to use as the affiliate sub ID, and a checklist for posting by hand.
+
+![Export with post text, disclosure, tracking code and checklist](docs/images/export.webp)
+
+**4. Measure results.** Import the affiliate report as CSV. Rows match exports by tracking code; other codes count as baseline posts.
+
+![Results comparing assisted posts with the baseline](docs/images/results.webp)
+
+**5. Watch the sources.** Each data source's health and every worker run, so a stale forecast is visible.
+
+![Operations: source health and run history](docs/images/operations.webp)
+
+## Engineering highlights
+
+- **Copy can't overclaim:** every variant is checked against the listing's verified facts. Prices, superlatives, urgency, health or safety claims, durability claims, fear framing and numbers that aren't in the facts fail validation before anything can be exported.
+- **Auditable decisions:** accepting, deferring or rejecting an opportunity is recorded, and failed marketplace searches are logged too.
+- **Reliable worker:** each source run is recorded with its outcome, and source health is visible in the app and at `GET /operations/sources`. The app switches from demo to live data only after a real run succeeds.
+- **Token never reaches the browser:** the web app talks to the API only from the Next.js server, and every API route except `/health` requires a bearer token when one is configured. Production refuses to start without it.
+- **Tested on both databases:** CI runs 87 Python tests on SQLite and again on PostgreSQL, plus 8 web tests, lint, type checks and a production build. A separate script measures the copy policy's pass rate.
+
+## Tech stack
+
+| Part | Technology |
+| --- | --- |
+| API and worker | Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic, structlog |
+| Data | SQLite by default, PostgreSQL (asyncpg) for shared or deployed use |
+| Copywriting | Anthropic API (optional), template fallback, rule-based claim checker |
+| Web | Next.js 16, React 19, TypeScript |
+| Quality | pytest, Ruff, Vitest, GitHub Actions |
+
+## Run it locally
 
 ### API
 
@@ -27,7 +66,7 @@ py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m uvicorn apps.api.app.main:app --reload
 ```
 
-The default local database is SQLite so development works without Docker. Set `DATABASE_URL` to an async PostgreSQL URL for shared or deployed environments.
+The default database is SQLite, so development works without Docker. Set `DATABASE_URL` to an async PostgreSQL URL for shared or deployed environments. Copy `.env.example` to `.env` first.
 
 ### Worker
 
@@ -36,9 +75,7 @@ The default local database is SQLite so development works without Docker. Set `D
 .venv\Scripts\python.exe -m tr3ndly.worker --once   # run enabled sources now, then exit (cron or Task Scheduler)
 ```
 
-Run exactly one worker per database. Each run is recorded and can be inspected at `GET /operations/runs`; source health is at `GET /operations/sources`. Once any run succeeds, Today switches from demo to live mode and hides the seeded demo card.
-
-Open-Meteo's free API is for non-commercial use. In production, set `OPEN_METEO_API_KEY`; the app refuses to start without it. Attribution (CC BY 4.0) is shown in the Today footer.
+Run exactly one worker per database. Open-Meteo's free API is for non-commercial use; in production set `OPEN_METEO_API_KEY`, or the app refuses to start. Attribution (CC BY 4.0) is shown in the Today footer.
 
 ### Web
 
@@ -47,19 +84,14 @@ npm.cmd install
 npm.cmd run dev:web
 ```
 
-Open http://localhost:3000 for Today, http://localhost:3000/results for results, and http://localhost:3000/operations for source health and run history. The API runs at http://localhost:8000 and exposes OpenAPI documentation at http://localhost:8000/docs.
+Copy `apps/web/.env.example` to `apps/web/.env.local` first. Open http://localhost:3000 for **Today**, `/results` for results and `/operations` for source health. The API runs at http://localhost:8000 with OpenAPI docs at `/docs`.
 
-### Security
+### Before exposing it anywhere
 
-Locally, both apps are open unless you configure the secrets. Before exposing them anywhere:
+Both apps are open locally unless you set the secrets:
 
-- **API (`.env`):** set `OPERATOR_TOKEN` to 32+ random characters. Every route except `/health` then requires `Authorization: Bearer <token>`. `ENVIRONMENT=production` refuses to start without it.
-- **Web (`apps/web/.env.local`, see `apps/web/.env.example`):**
-  - set `API_OPERATOR_TOKEN` to the same token;
-  - set `OPERATOR_PASSWORD`, which enables the sign-in page;
-  - set `SESSION_SECRET` to 32+ random characters.
-
-The browser never talks to the API directly. Pages and decisions go through the Next.js server, so the token never reaches the browser.
+- **API (`.env`):** set `OPERATOR_TOKEN` to 32+ random characters. `ENVIRONMENT=production` refuses to start without it.
+- **Web (`apps/web/.env.local`):** set `API_OPERATOR_TOKEN` to the same token, `OPERATOR_PASSWORD` to enable the sign-in page, and `SESSION_SECRET` to 32+ random characters.
 
 ## Checks
 
@@ -74,6 +106,6 @@ npm.cmd run build:web
 .venv\Scripts\python.exe scripts\eval_copy.py   # copy policy pass rate; calls Claude when a key is set
 ```
 
-## Configuration
+## Documentation
 
-Copy `.env.example` to `.env` (API and worker) and `apps/web/.env.example` to `apps/web/.env.local` (web), then adjust them. Do not commit either file.
+- [Development notes](docs/dev-notes/): the master build plan, the original system architecture and the progress log
