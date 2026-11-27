@@ -2,7 +2,8 @@
 
 Runs every brief in tests/fixtures/copy_briefs.json through the configured copywriter (Claude
 when ANTHROPIC_API_KEY is set, the template otherwise) and reports how many variants pass the
-policy checks. Run it before changing COPY_PROMPT_VERSION, and record the result in docs/dev-notes/PROGRESS.md.
+policy checks. Run it before changing COPY_PROMPT_VERSION, and record the result in
+docs/dev-notes/PROGRESS.md.
 Each Claude run makes one API call per brief.
 
     .venv\\Scripts\\python.exe scripts\\eval_copy.py
